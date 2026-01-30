@@ -63,74 +63,152 @@
 }
 
 /* ==========================================================================
-   Camera Selector
+   Settings Panel
    ========================================================================== */
 
-.pose-widget__camera-selector {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
+.pose-widget__settings-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height var(--transition-normal), padding var(--transition-normal);
+  background: var(--color-surface);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  margin-bottom: 0;
+}
+
+.pose-widget__settings-panel--open {
+  max-height: 600px;
+  padding: var(--spacing-md);
   margin-bottom: var(--spacing-md);
 }
 
-.pose-widget__camera-label {
+.pose-widget__settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pose-widget__settings-title {
   font-weight: 600;
   font-size: 14px;
   color: var(--color-text-primary);
 }
 
-.pose-widget__select {
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 8px 32px 8px 12px;
-  background-color: var(--color-surface);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%234a5568' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  font-size: 14px;
-  font-family: inherit;
-  color: var(--color-text-primary);
+.pose-widget__close-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
   cursor: pointer;
-  min-width: 150px;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  font-size: 12px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: 4px;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.pose-widget__select:hover {
-  border-color: var(--color-border-hover);
-}
-
-.pose-widget__select:focus {
-  outline: none;
-  border-color: var(--color-accent);
-  box-shadow: var(--shadow-focus);
+.pose-widget__close-btn:hover {
+  background: var(--color-border);
+  color: var(--color-text-primary);
 }
 
 /* ==========================================================================
-   Debug Info Panel
+   Section Titles
    ========================================================================== */
 
-.pose-widget__debug {
+.pose-widget__section-title {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.pose-widget__section-hint {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+/* ==========================================================================
+   Camera Selection Section
+   ========================================================================== */
+
+.pose-widget__camera-section {
+  margin-bottom: var(--spacing-md);
+}
+
+.pose-widget__camera-list {
+  margin-bottom: 0;
+}
+
+.pose-widget__camera-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+}
+
+.pose-widget__camera-item:hover {
+  background: var(--color-bg);
+}
+
+.pose-widget__camera-item--selected {
+  background: rgba(66, 153, 225, 0.1);
+}
+
+.pose-widget__camera-item--selected:hover {
+  background: rgba(66, 153, 225, 0.15);
+}
+
+.pose-widget__camera-item input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+.pose-widget__camera-item-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.pose-widget__camera-item-time {
   font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
   font-size: 11px;
   color: var(--color-text-secondary);
-  background: transparent;
-  border-left: 2px solid var(--color-border);
-  padding: var(--spacing-xs) 0 var(--spacing-xs) var(--spacing-md);
-  margin-bottom: var(--spacing-md);
-  line-height: 1.4;
+}
+
+.pose-widget__camera-item-keypoints {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.pose-widget__empty-text {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  padding: var(--spacing-sm);
 }
 
 /* ==========================================================================
-   Keypoint Toggles
+   Keypoint Section
    ========================================================================== */
+
+.pose-widget__keypoint-section {
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  margin-bottom: var(--spacing-md);
+}
 
 .pose-widget__keypoint-toggles-wrapper {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
 }
 
 .pose-widget__keypoint-toggles {
@@ -182,12 +260,45 @@
   background: var(--color-border-hover);
 }
 
-/* Separator between utility and keypoint buttons */
-.pose-widget__separator {
-  width: 1px;
-  height: 24px;
-  background: var(--color-border);
-  margin: 0 var(--spacing-xs);
+/* ==========================================================================
+   Display Options Section
+   ========================================================================== */
+
+.pose-widget__display-section {
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.pose-widget__label-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  user-select: none;
+}
+
+.pose-widget__label-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+/* ==========================================================================
+   Debug Info Panel
+   ========================================================================== */
+
+.pose-widget__debug {
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border-left: 2px solid var(--color-border);
+  padding: var(--spacing-xs) 0 var(--spacing-xs) var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  line-height: 1.4;
 }
 
 /* ==========================================================================
@@ -202,7 +313,7 @@
   background: var(--color-surface);
   border-radius: 8px;
   border: 1px solid var(--color-border);
-  margin-bottom: var(--spacing-md);
+  margin-top: var(--spacing-md);
 }
 
 /* ==========================================================================
@@ -251,6 +362,12 @@
 .pose-widget__button:focus {
   outline: none;
   box-shadow: var(--shadow-focus), var(--shadow-sm);
+}
+
+/* Settings button */
+.pose-widget__settings-btn {
+  padding: 0.5em;
+  min-width: 44px;
 }
 
 /* ==========================================================================
@@ -333,27 +450,6 @@
 }
 
 /* ==========================================================================
-   Label Toggle
-   ========================================================================== */
-
-.pose-widget__label-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--color-text-primary);
-  user-select: none;
-}
-
-.pose-widget__label-toggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  accent-color: var(--color-accent);
-}
-
-/* ==========================================================================
    Video Container
    ========================================================================== */
 
@@ -365,6 +461,15 @@
   border: 1px solid var(--color-border);
   overflow: hidden;
   background: var(--color-video-bg);
+}
+
+.pose-widget__video-container--empty .pose-widget__video,
+.pose-widget__video-container--empty .pose-widget__canvas {
+  display: none;
+}
+
+.pose-widget__video-container--empty .pose-widget__empty-msg {
+  display: flex;
 }
 
 .pose-widget__video {
@@ -380,6 +485,21 @@
   top: 0;
   left: 0;
   pointer-events: none;
+}
+
+.pose-widget__empty-msg {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  text-align: center;
+  padding: var(--spacing-xl);
 }
 
 /* ==========================================================================

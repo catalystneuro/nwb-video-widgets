@@ -218,3 +218,111 @@ def start_video_server(directory: Path) -> int:
 
     _video_servers[dir_key] = (server, port)
     return port
+
+
+def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
+    """Discover all PoseEstimation containers in an NWB file.
+
+    Parameters
+    ----------
+    nwbfile : NWBFile
+        NWB file to search for pose estimation data
+
+    Returns
+    -------
+    dict
+        Mapping of camera names to PoseEstimation objects from
+        processing['pose_estimation'].
+    """
+    if "pose_estimation" not in nwbfile.processing:
+        return {}
+
+    pose_module = nwbfile.processing["pose_estimation"]
+
+    # Get only PoseEstimation objects (not Skeletons or other types)
+    cameras = {}
+    for name, obj in pose_module.data_interfaces.items():
+        if type(obj).__name__ == "PoseEstimation":
+            cameras[name] = obj
+
+    return cameras
+
+
+def get_camera_to_video_mapping(nwbfile: NWBFile) -> dict[str, str]:
+    """Auto-map pose estimation camera names to video series names.
+
+    Uses the naming convention: camera name prefixed with "Video"
+    - 'LeftCamera' -> 'VideoLeftCamera'
+    - 'BodyCamera' -> 'VideoBodyCamera'
+
+    Only returns mappings where both the camera and corresponding video exist.
+
+    Parameters
+    ----------
+    nwbfile : NWBFile
+        NWB file containing pose estimation and video data
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping from camera names to video series names
+    """
+    cameras = discover_pose_estimation_cameras(nwbfile)
+    video_series = discover_video_series(nwbfile)
+
+    mapping = {}
+    for camera_name in cameras:
+        video_name = f"Video{camera_name}"
+        if video_name in video_series:
+            mapping[camera_name] = video_name
+
+    return mapping
+
+
+def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:
+    """Extract pose estimation info for all cameras in an NWB file.
+
+    Parameters
+    ----------
+    nwbfile : NWBFile
+        NWB file containing pose estimation in processing['pose_estimation']
+
+    Returns
+    -------
+    dict[str, dict]
+        Mapping of camera names to info dictionaries with keys:
+        - start: float, start time in seconds
+        - end: float, end time in seconds
+        - frames: int, number of frames
+        - keypoints: list[str], names of keypoints
+    """
+    cameras = discover_pose_estimation_cameras(nwbfile)
+    info = {}
+
+    for camera_name, pose_estimation in cameras.items():
+        # Get keypoint names (remove PoseEstimationSeries suffix)
+        keypoint_names = [
+            name.replace("PoseEstimationSeries", "")
+            for name in pose_estimation.pose_estimation_series.keys()
+        ]
+
+        # Get timestamps from the first pose estimation series
+        first_series = next(iter(pose_estimation.pose_estimation_series.values()), None)
+        if first_series is not None and first_series.timestamps is not None:
+            timestamps = first_series.timestamps[:]
+            start = float(timestamps[0])
+            end = float(timestamps[-1])
+            frames = len(timestamps)
+        else:
+            start = 0.0
+            end = 0.0
+            frames = 0
+
+        info[camera_name] = {
+            "start": start,
+            "end": end,
+            "frames": frames,
+            "keypoints": keypoint_names,
+        }
+
+    return info
