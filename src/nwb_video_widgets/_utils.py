@@ -60,6 +60,51 @@ def get_video_timestamps(nwbfile: NWBFile) -> dict[str, list[float]]:
     return timestamps
 
 
+def get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
+    """Extract video time range information from all ImageSeries in an NWB file.
+
+    Parameters
+    ----------
+    nwbfile : NWBFile
+        NWB file containing video ImageSeries in acquisition
+
+    Returns
+    -------
+    dict[str, dict]
+        Mapping of video names to info dictionaries with keys:
+        - start: float, start time in seconds
+        - end: float, end time in seconds
+        - frames: int, number of frames
+    """
+    video_series = discover_video_series(nwbfile)
+    info = {}
+
+    for name, series in video_series.items():
+        if series.timestamps is not None:
+            timestamps = series.timestamps[:]
+            start = float(timestamps[0])
+            end = float(timestamps[-1])
+            frames = len(timestamps)
+        elif series.starting_time is not None:
+            start = float(series.starting_time)
+            # Without timestamps, we can't determine end time accurately
+            # Use starting_time as both start and end
+            end = start
+            frames = 1
+        else:
+            start = 0.0
+            end = 0.0
+            frames = 1
+
+        info[name] = {
+            "start": start,
+            "end": end,
+            "frames": frames,
+        }
+
+    return info
+
+
 class _RangeRequestHandler(SimpleHTTPRequestHandler):
     """HTTP request handler with CORS headers and Range request support for video streaming."""
 

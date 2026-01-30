@@ -72,7 +72,7 @@
   background: var(--color-surface);
   border-radius: 8px;
   border: 1px solid var(--color-border);
-  margin-bottom: var(--spacing-md);
+  margin-top: var(--spacing-md);
 }
 
 /* ==========================================================================
@@ -269,6 +269,204 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ==========================================================================
+   Settings Button
+   ========================================================================== */
+
+.video-widget__settings-btn {
+  padding: 0.5em;
+  min-width: 44px;
+}
+
+/* ==========================================================================
+   Settings Panel
+   ========================================================================== */
+
+.video-widget__settings-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height var(--transition-normal), padding var(--transition-normal);
+  background: var(--color-surface);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  margin-bottom: 0;
+}
+
+.video-widget__settings-panel--open {
+  max-height: 500px;
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.video-widget__settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.video-widget__settings-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.video-widget__close-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: 4px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.video-widget__close-btn:hover {
+  background: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+/* ==========================================================================
+   Section Titles
+   ========================================================================== */
+
+.video-widget__section-title {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.video-widget__section-hint {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+/* ==========================================================================
+   Video Selection Section
+   ========================================================================== */
+
+.video-widget__video-selection-section {
+  margin-bottom: var(--spacing-md);
+}
+
+/* ==========================================================================
+   Video List
+   ========================================================================== */
+
+.video-widget__video-list {
+  margin-bottom: 0;
+}
+
+.video-widget__video-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+}
+
+.video-widget__video-item:hover {
+  background: var(--color-bg);
+}
+
+.video-widget__video-item--incompatible {
+  opacity: 0.5;
+}
+
+.video-widget__video-item--incompatible .video-widget__video-item-label {
+  color: var(--color-text-muted);
+}
+
+.video-widget__video-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.video-widget__video-item input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+.video-widget__video-item-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.video-widget__video-item-time {
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.video-widget__warning-icon {
+  color: #e53e3e;
+  display: flex;
+  align-items: center;
+}
+
+.video-widget__warning-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.video-widget__empty-msg {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  padding: var(--spacing-sm);
+}
+
+/* ==========================================================================
+   Layout Section
+   ========================================================================== */
+
+.video-widget__layout-section {
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.video-widget__layout-options {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.video-widget__layout-option {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.video-widget__layout-option input[type="radio"] {
+  cursor: pointer;
+}
+
+.video-widget__layout-option:hover {
+  color: var(--color-text-primary);
+}
+
+/* ==========================================================================
+   Empty Grid Message
+   ========================================================================== */
+
+.video-widget__empty-grid-msg {
+  text-align: center;
+  padding: var(--spacing-xl);
+  color: var(--color-text-muted);
+  font-size: 14px;
 }
 
 /* ==========================================================================

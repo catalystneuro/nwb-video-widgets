@@ -10,19 +10,19 @@ import anywidget
 import traitlets
 from pynwb import NWBFile
 
-from nwb_video_widgets._utils import discover_video_series, get_video_timestamps
+from nwb_video_widgets._utils import discover_video_series, get_video_info, get_video_timestamps
 
 if TYPE_CHECKING:
     from dandi.dandiapi import RemoteAsset
-
-DEFAULT_GRID_LAYOUT = [["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]]
 
 
 class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     """Display videos from a DANDI-hosted NWB file with synchronized playback.
 
     This widget discovers ImageSeries with external_file references in the NWB
-    file and resolves their paths to S3 URLs via the DANDI API.
+    file and resolves their paths to S3 URLs via the DANDI API. An interactive
+    settings panel allows users to select which videos to display and choose
+    between Row, Column, or Grid layouts.
 
     Parameters
     ----------
@@ -32,13 +32,6 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     nwbfile : pynwb.NWBFile, optional
         Pre-loaded NWB file to avoid re-loading. If not provided, the widget
         will load the NWB file via streaming.
-    version : str, optional
-        Dandiset version. Default: "draft"
-    grid_layout : list of list of str, optional
-        Grid layout specifying which videos to display and how to arrange them.
-        Each inner list represents a row, and each string is a video series name.
-        Videos not found in the NWB file are silently skipped.
-        Default: [["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]]
 
     Example
     -------
@@ -58,8 +51,11 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     """
 
     video_urls = traitlets.Dict({}).tag(sync=True)
-    grid_layout = traitlets.List([]).tag(sync=True)
     video_timestamps = traitlets.Dict({}).tag(sync=True)
+    available_videos = traitlets.Dict({}).tag(sync=True)
+    selected_videos = traitlets.List([]).tag(sync=True)
+    layout_mode = traitlets.Unicode("row").tag(sync=True)
+    settings_open = traitlets.Bool(False).tag(sync=True)
 
     _esm = pathlib.Path(__file__).parent / "video_widget.js"
     _css = pathlib.Path(__file__).parent / "video_widget.css"
@@ -68,7 +64,6 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
         self,
         asset: RemoteAsset,
         nwbfile: Optional[NWBFile] = None,
-        grid_layout: Optional[list[list[str]]] = None,
         **kwargs,
     ):
         # Load NWB file if not provided
@@ -77,12 +72,16 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
 
         video_urls = self.get_video_urls_from_dandi(nwbfile, asset)
         video_timestamps = get_video_timestamps(nwbfile)
-        layout = grid_layout if grid_layout is not None else DEFAULT_GRID_LAYOUT
+        available_videos = get_video_info(nwbfile)
 
+        # Start with no videos selected to avoid initial buffering
         super().__init__(
             video_urls=video_urls,
-            grid_layout=layout,
             video_timestamps=video_timestamps,
+            available_videos=available_videos,
+            selected_videos=[],
+            layout_mode="grid",
+            settings_open=True,
             **kwargs,
         )
 
