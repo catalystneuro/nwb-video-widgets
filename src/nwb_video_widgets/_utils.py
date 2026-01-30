@@ -1,0 +1,175 @@
+"""Shared utilities for NWB video widgets."""
+
+import socket
+import threading
+from functools import partial
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+
+from pynwb import NWBFile
+from pynwb.image import ImageSeries
+
+# Global registry for video file servers
+_video_servers: dict[str, tuple[HTTPServer, int]] = {}
+
+
+def discover_video_series(nwbfile: NWBFile) -> dict[str, ImageSeries]:
+    """Discover all ImageSeries with external video files in an NWB file.
+
+    Parameters
+    ----------
+    nwbfile : NWBFile
+        NWB file to search for video series
+
+    Returns
+    -------
+    dict[str, ImageSeries]
+        Mapping of series names to ImageSeries objects that have external_file
+    """
+    video_series = {}
+    for name, obj in nwbfile.acquisition.items():
+        if isinstance(obj, ImageSeries) and obj.external_file is not None:
+            video_series[name] = obj
+    return video_series
+
+
+def get_video_timestamps(nwbfile: NWBFile) -> dict[str, list[float]]:
+    """Extract video timestamps from all ImageSeries in an NWB file.
+
+    Parameters
+    ----------
+    nwbfile : NWBFile
+        NWB file containing video ImageSeries in acquisition
+
+    Returns
+    -------
+    dict[str, list[float]]
+        Mapping of video names to timestamp arrays
+    """
+    video_series = discover_video_series(nwbfile)
+    timestamps = {}
+
+    for name, series in video_series.items():
+        if series.timestamps is not None:
+            timestamps[name] = [float(t) for t in series.timestamps[:]]
+        elif series.starting_time is not None:
+            timestamps[name] = [float(series.starting_time)]
+        else:
+            timestamps[name] = [0.0]
+
+    return timestamps
+
+
+class _RangeRequestHandler(SimpleHTTPRequestHandler):
+    """HTTP request handler with CORS headers and Range request support for video streaming."""
+
+    def send_head(self):
+        """Handle HEAD requests and Range requests for partial content."""
+        path = self.translate_path(self.path)
+
+        if not Path(path).is_file():
+            return super().send_head()
+
+        file_size = Path(path).stat().st_size
+        range_header = self.headers.get("Range")
+
+        if range_header:
+            # Parse Range header (e.g., "bytes=0-1023")
+            try:
+                range_spec = range_header.replace("bytes=", "")
+                start_str, end_str = range_spec.split("-")
+                start = int(start_str) if start_str else 0
+                end = int(end_str) if end_str else file_size - 1
+                end = min(end, file_size - 1)
+                content_length = end - start + 1
+
+                f = open(path, "rb")
+                f.seek(start)
+
+                self.send_response(206)  # Partial Content
+                self.send_header("Content-Type", self.guess_type(path))
+                self.send_header("Content-Length", str(content_length))
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
+                self.send_header("Access-Control-Allow-Headers", "Range")
+                self.send_header("Access-Control-Expose-Headers", "Content-Range, Content-Length")
+                self.end_headers()
+                return f
+            except (ValueError, IOError):
+                pass
+
+        # No Range header or invalid range - serve full file
+        return super().send_head()
+
+    def end_headers(self):
+        """Add CORS headers to all responses."""
+        # Only add if not already added (for non-range requests)
+        if not self._headers_buffer or b"Access-Control-Allow-Origin" not in b"".join(self._headers_buffer):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
+            self.send_header("Access-Control-Allow-Headers", "Range")
+            self.send_header("Accept-Ranges", "bytes")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests."""
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
+        self.send_header("Access-Control-Allow-Headers", "Range")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        """Suppress logging to avoid cluttering notebook output."""
+        pass
+
+    def handle(self):
+        """Handle requests, suppressing connection reset errors."""
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError):
+            # Browser closed connection early - this is normal during video seeking
+            pass
+
+
+def _find_free_port() -> int:
+    """Find a free port on localhost."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def start_video_server(directory: Path) -> int:
+    """Start an HTTP server to serve video files from a directory.
+
+    If a server is already running for this directory, returns its port.
+
+    Parameters
+    ----------
+    directory : Path
+        Directory containing video files to serve
+
+    Returns
+    -------
+    int
+        Port number the server is listening on
+    """
+    dir_key = str(directory.resolve())
+
+    # Return existing server port if already running
+    if dir_key in _video_servers:
+        _, port = _video_servers[dir_key]
+        return port
+
+    port = _find_free_port()
+    handler = partial(_RangeRequestHandler, directory=str(directory))
+    server = HTTPServer(("127.0.0.1", port), handler)
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    _video_servers[dir_key] = (server, port)
+    return port
