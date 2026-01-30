@@ -101,8 +101,11 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     camera_to_video = traitlets.Dict({}).tag(sync=True)
     settings_open = traitlets.Bool(True).tag(sync=True)
 
-    # All pose data for all cameras - loaded upfront for instant camera switching
+    # Pose data for cameras - loaded lazily when selected
     all_camera_data = traitlets.Dict({}).tag(sync=True)
+
+    # Loading state for progress indicator
+    loading = traitlets.Bool(False).tag(sync=True)
 
     show_labels = traitlets.Bool(True).tag(sync=True)
     visible_keypoints = traitlets.Dict({}).tag(sync=True)
@@ -189,33 +192,51 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         else:
             selected_camera = ""
 
-        # Get colormap for automatic color assignment
-        cmap = plt.get_cmap(colormap_name)
-
-        # Load all camera data upfront
-        all_camera_data = {}
-        for camera_name in available_cameras:
-            all_camera_data[camera_name] = self._load_camera_pose_data(
-                pose_estimation, camera_name, cmap, custom_colors
-            )
-
-        # Initialize visibility for all keypoints across all cameras
-        visible_keypoints = {}
-        for camera_data in all_camera_data.values():
-            for name in camera_data["keypoint_metadata"].keys():
-                if name not in visible_keypoints:
-                    visible_keypoints[name] = True
+        # Store references for lazy loading (not synced to JS)
+        self._pose_estimation = pose_estimation
+        self._cmap = plt.get_cmap(colormap_name)
+        self._custom_colors = custom_colors
 
         super().__init__(
             selected_camera=selected_camera,
             available_cameras=available_cameras,
             available_cameras_info=available_cameras_info,
             camera_to_video=camera_to_video,
-            all_camera_data=all_camera_data,
-            visible_keypoints=visible_keypoints,
+            all_camera_data={},  # Start empty, load lazily
+            visible_keypoints={},  # Populated as cameras are loaded
             settings_open=True,
             **kwargs,
         )
+
+    @traitlets.observe("selected_camera")
+    def _on_camera_selected(self, change):
+        """Load pose data lazily when a camera is selected."""
+        camera_name = change["new"]
+        if not camera_name or camera_name in self.all_camera_data:
+            return  # Already loaded or no camera selected
+
+        # Signal loading start
+        self.loading = True
+
+        try:
+            # Load pose data for this camera
+            camera_data = self._load_camera_pose_data(
+                self._pose_estimation, camera_name, self._cmap, self._custom_colors
+            )
+
+            # Update all_camera_data (must create new dict for traitlets to detect change)
+            self.all_camera_data = {**self.all_camera_data, camera_name: camera_data}
+
+            # Add any new keypoints to visible_keypoints
+            new_keypoints = {**self.visible_keypoints}
+            for name in camera_data["keypoint_metadata"].keys():
+                if name not in new_keypoints:
+                    new_keypoints[name] = True
+            if new_keypoints != self.visible_keypoints:
+                self.visible_keypoints = new_keypoints
+        finally:
+            # Signal loading complete
+            self.loading = False
 
     @staticmethod
     def _load_nwbfile_from_dandi(asset: RemoteAsset) -> NWBFile:
@@ -306,18 +327,14 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         ):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
-            # Get coordinates - vectorized conversion for speed
-            data = series.data[:]  # shape: (n_frames, 2)
-
-            # Find frames with NaN values (vectorized)
-            nan_mask = np.isnan(data).any(axis=1)
-
-            # Convert to list of [x, y] or None for NaN frames
-            # Use vectorized tolist() for valid data, then set NaN frames to None
-            coords_list = data.tolist()
-            for i in np.where(nan_mask)[0]:
-                coords_list[i] = None
-
+            # Get coordinates - iterate to build list without memory duplication
+            data = series.data[:]
+            coords_list = []
+            for x, y in data:
+                if np.isnan(x) or np.isnan(y):
+                    coords_list.append(None)
+                else:
+                    coords_list.append([float(x), float(y)])
             coordinates[short_name] = coords_list
 
             if timestamps is None:

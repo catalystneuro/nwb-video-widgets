@@ -224,9 +224,24 @@ function render({ model, el }) {
   emptyMsg.classList.add("pose-widget__empty-msg");
   emptyMsg.textContent = "Select a camera above to display video with pose overlay.";
 
+  // Loading overlay
+  const loadingOverlay = document.createElement("div");
+  loadingOverlay.classList.add("pose-widget__loading-overlay");
+
+  const loadingSpinner = document.createElement("div");
+  loadingSpinner.classList.add("pose-widget__loading-spinner");
+
+  const loadingText = document.createElement("div");
+  loadingText.classList.add("pose-widget__loading-text");
+  loadingText.textContent = "Loading pose data...";
+
+  loadingOverlay.appendChild(loadingSpinner);
+  loadingOverlay.appendChild(loadingText);
+
   videoContainer.appendChild(video);
   videoContainer.appendChild(canvas);
   videoContainer.appendChild(emptyMsg);
+  videoContainer.appendChild(loadingOverlay);
 
   let isPlaying = false;
   let animationId = null;
@@ -525,6 +540,24 @@ function render({ model, el }) {
     if (isPlaying) animationId = requestAnimationFrame(animate);
   }
 
+  function updateLoadingState() {
+    const isLoading = model.get("loading");
+    const camera = model.get("selected_camera");
+    const data = getCurrentCameraData();
+
+    if (isLoading || (camera && !data)) {
+      // Show loading overlay, hide video
+      loadingOverlay.classList.add("pose-widget__loading-overlay--visible");
+      video.style.visibility = "hidden";
+      canvas.style.visibility = "hidden";
+    } else {
+      // Hide loading overlay, show video
+      loadingOverlay.classList.remove("pose-widget__loading-overlay--visible");
+      video.style.visibility = "visible";
+      canvas.style.visibility = "visible";
+    }
+  }
+
   function loadVideo() {
     const camera = model.get("selected_camera");
     if (!camera) {
@@ -537,6 +570,7 @@ function render({ model, el }) {
     if (videoUrl && video.src !== videoUrl) {
       video.src = videoUrl;
     }
+    updateLoadingState();
   }
 
   function updatePlayPauseIcon(playing) {
@@ -592,6 +626,20 @@ function render({ model, el }) {
   model.on("change:settings_open", updateSettingsPanel);
   model.on("change:available_cameras", updateSettingsPanel);
   model.on("change:available_cameras_info", updateSettingsPanel);
+
+  // Listen for lazy-loaded camera data
+  model.on("change:all_camera_data", () => {
+    updateLoadingState();
+    createKeypointToggles();
+    drawPose();
+  });
+
+  model.on("change:visible_keypoints", () => {
+    visibleKeypoints = { ...model.get("visible_keypoints") };
+    updateToggleStyles();
+  });
+
+  model.on("change:loading", updateLoadingState);
 
   playPauseBtn.addEventListener("click", () => {
     const selectedCamera = model.get("selected_camera");
