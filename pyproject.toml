@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nwb-video-widgets"
+version = "0.1.0"
+description = "Interactive Jupyter widgets for NWB video and pose visualization"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Heberto Mayorquin" }
+]
+keywords = ["jupyter", "widget", "anywidget", "nwb", "neuroscience", "video", "pose"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Jupyter",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "anywidget>=0.9.0",
+    "pynwb",
+    "numpy",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dandi = ["dandi>=0.60.0", "remfile>=0.1.13", "h5py"]
+test = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "opencv-python-headless",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "ruff",
+    "jupyterlab",
+    "ipykernel>=7.1.0",
+    "remfile>=0.1.13",
+    "dandi>=0.74.1",
+    "opencv-python-headless",
+]
+
+[project.urls]
+Homepage = "https://github.com/catalystneuro/nwb-video-widgets"
+Repository = "https://github.com/catalystneuro/nwb-video-widgets"
+
+[tool.hatch.build]
+artifacts = ["src/nwb_video_widgets/*.js", "src/nwb_video_widgets/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "dandi: marks tests that require DANDI network access",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
