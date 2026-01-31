@@ -1,12 +1,10 @@
 /**
  * Pose estimation video player widget.
- * Overlays DeepLabCut keypoints on streaming video with camera selection.
+ * Overlays keypoints on streaming video with pose estimation selection.
  *
  * Data format (from Python via JSON):
- * - all_camera_data: {camera_name: {keypoint_metadata, pose_coordinates, timestamps}}
- *   All camera data is loaded upfront for instant switching
+ * - all_camera_data: {pose_name: {keypoint_metadata, pose_coordinates, timestamps}}
  * - pose_coordinates: {keypoint_name: [[x, y], null, [x, y], ...]}
- *   Each keypoint has an array of coordinates per frame, null for missing data
  * - timestamps: [t0, t1, t2, ...] array of frame timestamps
  */
 
@@ -15,8 +13,6 @@ const DISPLAY_HEIGHT = 512;
 
 /**
  * Format seconds as MM:SS.ms string for session time display.
- * @param {number} seconds - Time in seconds
- * @returns {string} Formatted time string
  */
 function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
@@ -27,9 +23,6 @@ function formatTime(seconds) {
 
 /**
  * Binary search for frame index closest to target time.
- * @param {number[]} timestamps - Sorted array of timestamps
- * @param {number} targetTime - Time to find
- * @returns {number} Index of closest timestamp
  */
 function findFrameIndex(timestamps, targetTime) {
   if (!timestamps || timestamps.length === 0) return 0;
@@ -48,8 +41,6 @@ function findFrameIndex(timestamps, targetTime) {
 
 /**
  * Create an SVG icon element.
- * @param {"play" | "pause" | "settings"} type - Icon type
- * @returns {SVGElement}
  */
 function createIcon(type) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -68,6 +59,10 @@ function createIcon(type) {
       "d",
       "M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
     );
+  } else if (type === "chevron-down") {
+    path.setAttribute("d", "M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z");
+  } else if (type === "chevron-up") {
+    path.setAttribute("d", "M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6 1.41 1.41z");
   }
   svg.appendChild(path);
   return svg;
@@ -75,137 +70,128 @@ function createIcon(type) {
 
 /**
  * Render the pose video player widget.
- *
- * @param {Object} context - Provided by anywidget
- * @param {Object} context.model - Proxy to Python traitlets
- * @param {HTMLElement} context.el - The DOM element where the widget should render
  */
 function render({ model, el }) {
-  // Root wrapper with scoped class
   const wrapper = document.createElement("div");
   wrapper.classList.add("pose-widget");
 
-  // Control bar
-  const controls = document.createElement("div");
-  controls.classList.add("pose-widget__controls");
+  // ============ POSE ESTIMATION SELECTION SECTION ============
+  const poseSection = document.createElement("div");
+  poseSection.classList.add("pose-widget__section", "pose-widget__section--pose");
 
-  const playPauseBtn = document.createElement("button");
-  playPauseBtn.classList.add("pose-widget__button");
-  playPauseBtn.appendChild(createIcon("play"));
+  const poseHeader = document.createElement("div");
+  poseHeader.classList.add("pose-widget__section-header");
 
-  const settingsBtn = document.createElement("button");
-  settingsBtn.classList.add("pose-widget__button", "pose-widget__settings-btn");
-  settingsBtn.appendChild(createIcon("settings"));
-  settingsBtn.title = "Settings";
+  const poseTitleWrapper = document.createElement("div");
+  poseTitleWrapper.classList.add("pose-widget__section-title-wrapper");
 
-  const seekBar = document.createElement("input");
-  seekBar.type = "range";
-  seekBar.min = 0;
-  seekBar.max = 100;
-  seekBar.value = 0;
-  seekBar.classList.add("pose-widget__seekbar");
+  const poseTitle = document.createElement("span");
+  poseTitle.classList.add("pose-widget__section-title");
+  poseTitle.textContent = "Pose Estimation";
 
-  const timeLabel = document.createElement("span");
-  timeLabel.classList.add("pose-widget__time-label");
-  timeLabel.textContent = "0:00.0 / 0:00.0";
+  const poseSelectedLabel = document.createElement("span");
+  poseSelectedLabel.classList.add("pose-widget__section-selected");
 
-  controls.appendChild(playPauseBtn);
-  controls.appendChild(settingsBtn);
-  controls.appendChild(seekBar);
-  controls.appendChild(timeLabel);
+  poseTitleWrapper.appendChild(poseTitle);
+  poseTitleWrapper.appendChild(poseSelectedLabel);
 
-  // Settings panel (collapsible)
-  const settingsPanel = document.createElement("div");
-  settingsPanel.classList.add("pose-widget__settings-panel");
+  const poseToggleIcon = document.createElement("span");
+  poseToggleIcon.classList.add("pose-widget__section-toggle");
+  poseToggleIcon.appendChild(createIcon("chevron-down"));
 
-  const settingsPanelHeader = document.createElement("div");
-  settingsPanelHeader.classList.add("pose-widget__settings-header");
+  poseHeader.appendChild(poseTitleWrapper);
+  poseHeader.appendChild(poseToggleIcon);
 
-  const settingsTitle = document.createElement("span");
-  settingsTitle.classList.add("pose-widget__settings-title");
-  settingsTitle.textContent = "Settings";
+  const poseContent = document.createElement("div");
+  poseContent.classList.add("pose-widget__section-content");
 
-  const closeBtn = document.createElement("button");
-  closeBtn.classList.add("pose-widget__close-btn");
-  closeBtn.textContent = "Close";
-  closeBtn.addEventListener("click", () => {
-    model.set("settings_open", false);
-    model.save_changes();
+  const poseHint = document.createElement("p");
+  poseHint.classList.add("pose-widget__section-hint");
+  poseHint.textContent = "Select a pose estimation to display.";
+
+  const poseList = document.createElement("div");
+  poseList.classList.add("pose-widget__pose-list");
+
+  poseContent.appendChild(poseHint);
+  poseContent.appendChild(poseList);
+
+  poseSection.appendChild(poseHeader);
+  poseSection.appendChild(poseContent);
+
+  // Toggle pose section collapse
+  poseHeader.addEventListener("click", () => {
+    poseSection.classList.toggle("pose-widget__section--collapsed");
+    poseToggleIcon.innerHTML = "";
+    poseToggleIcon.appendChild(
+      createIcon(
+        poseSection.classList.contains("pose-widget__section--collapsed")
+          ? "chevron-down"
+          : "chevron-up"
+      )
+    );
   });
 
-  settingsPanelHeader.appendChild(settingsTitle);
-  settingsPanelHeader.appendChild(closeBtn);
-  settingsPanel.appendChild(settingsPanelHeader);
+  // ============ VIDEO SELECTION SECTION ============
+  const videoSection = document.createElement("div");
+  videoSection.classList.add(
+    "pose-widget__section",
+    "pose-widget__section--video",
+    "pose-widget__section--hidden"
+  );
 
-  // Camera selection section
-  const cameraSection = document.createElement("div");
-  cameraSection.classList.add("pose-widget__camera-section");
+  const videoHeader = document.createElement("div");
+  videoHeader.classList.add("pose-widget__section-header");
 
-  const cameraTitle = document.createElement("span");
-  cameraTitle.classList.add("pose-widget__section-title");
-  cameraTitle.textContent = "Camera Selection";
-  cameraSection.appendChild(cameraTitle);
+  const videoTitleWrapper = document.createElement("div");
+  videoTitleWrapper.classList.add("pose-widget__section-title-wrapper");
 
-  const cameraHint = document.createElement("p");
-  cameraHint.classList.add("pose-widget__section-hint");
-  cameraHint.textContent = "Select a camera to display pose estimation overlay.";
-  cameraSection.appendChild(cameraHint);
+  const videoTitle = document.createElement("span");
+  videoTitle.classList.add("pose-widget__section-title");
+  videoTitle.textContent = "Video Selection";
 
-  const cameraList = document.createElement("div");
-  cameraList.classList.add("pose-widget__camera-list");
-  cameraSection.appendChild(cameraList);
+  const videoSelectedLabel = document.createElement("span");
+  videoSelectedLabel.classList.add("pose-widget__section-selected");
 
-  settingsPanel.appendChild(cameraSection);
+  videoTitleWrapper.appendChild(videoTitle);
+  videoTitleWrapper.appendChild(videoSelectedLabel);
 
-  // Keypoint visibility section
-  const keypointSection = document.createElement("div");
-  keypointSection.classList.add("pose-widget__keypoint-section");
+  const videoToggleIcon = document.createElement("span");
+  videoToggleIcon.classList.add("pose-widget__section-toggle");
+  videoToggleIcon.appendChild(createIcon("chevron-down"));
 
-  const keypointTitle = document.createElement("span");
-  keypointTitle.classList.add("pose-widget__section-title");
-  keypointTitle.textContent = "Keypoint Visibility";
-  keypointSection.appendChild(keypointTitle);
+  videoHeader.appendChild(videoTitleWrapper);
+  videoHeader.appendChild(videoToggleIcon);
 
-  const keypointTogglesWrapper = document.createElement("div");
-  keypointTogglesWrapper.classList.add("pose-widget__keypoint-toggles-wrapper");
+  // Toggle video section collapse
+  videoHeader.addEventListener("click", () => {
+    videoSection.classList.toggle("pose-widget__section--collapsed");
+    videoToggleIcon.innerHTML = "";
+    videoToggleIcon.appendChild(
+      createIcon(
+        videoSection.classList.contains("pose-widget__section--collapsed")
+          ? "chevron-down"
+          : "chevron-up"
+      )
+    );
+  });
 
-  const utilityRow = document.createElement("div");
-  utilityRow.classList.add("pose-widget__keypoint-toggles");
+  const videoContent = document.createElement("div");
+  videoContent.classList.add("pose-widget__section-content");
 
-  const keypointRow = document.createElement("div");
-  keypointRow.classList.add("pose-widget__keypoint-toggles");
+  const videoHint = document.createElement("p");
+  videoHint.classList.add("pose-widget__section-hint");
+  videoHint.textContent = "Select the video to overlay the pose estimation on.";
 
-  keypointTogglesWrapper.appendChild(utilityRow);
-  keypointTogglesWrapper.appendChild(keypointRow);
-  keypointSection.appendChild(keypointTogglesWrapper);
+  const videoSelect = document.createElement("select");
+  videoSelect.classList.add("pose-widget__video-select");
 
-  settingsPanel.appendChild(keypointSection);
+  videoContent.appendChild(videoHint);
+  videoContent.appendChild(videoSelect);
 
-  // Display options section
-  const displaySection = document.createElement("div");
-  displaySection.classList.add("pose-widget__display-section");
+  videoSection.appendChild(videoHeader);
+  videoSection.appendChild(videoContent);
 
-  const displayTitle = document.createElement("span");
-  displayTitle.classList.add("pose-widget__section-title");
-  displayTitle.textContent = "Display Options";
-  displaySection.appendChild(displayTitle);
-
-  const labelToggle = document.createElement("label");
-  labelToggle.classList.add("pose-widget__label-toggle");
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.checked = model.get("show_labels");
-  labelToggle.appendChild(checkbox);
-  labelToggle.appendChild(document.createTextNode(" Show keypoint labels"));
-  displaySection.appendChild(labelToggle);
-
-  settingsPanel.appendChild(displaySection);
-
-  // Debug info
-  const debugDiv = document.createElement("div");
-  debugDiv.classList.add("pose-widget__debug");
-
-  // Video container
+  // ============ VIDEO CONTAINER ============
   const videoContainer = document.createElement("div");
   videoContainer.classList.add("pose-widget__video-container");
 
@@ -219,12 +205,10 @@ function render({ model, el }) {
   canvas.height = DISPLAY_HEIGHT;
   canvas.classList.add("pose-widget__canvas");
 
-  // Empty state message
   const emptyMsg = document.createElement("div");
   emptyMsg.classList.add("pose-widget__empty-msg");
-  emptyMsg.textContent = "Select a camera above to display video with pose overlay.";
+  emptyMsg.textContent = "Select a pose estimation and video to begin.";
 
-  // Loading overlay
   const loadingOverlay = document.createElement("div");
   loadingOverlay.classList.add("pose-widget__loading-overlay");
 
@@ -243,47 +227,110 @@ function render({ model, el }) {
   videoContainer.appendChild(emptyMsg);
   videoContainer.appendChild(loadingOverlay);
 
+  // ============ CONTROLS ============
+  const controls = document.createElement("div");
+  controls.classList.add("pose-widget__controls");
+
+  const playPauseBtn = document.createElement("button");
+  playPauseBtn.classList.add("pose-widget__button");
+  playPauseBtn.appendChild(createIcon("play"));
+
+  const seekBar = document.createElement("input");
+  seekBar.type = "range";
+  seekBar.min = 0;
+  seekBar.max = 100;
+  seekBar.value = 0;
+  seekBar.classList.add("pose-widget__seekbar");
+
+  const timeLabel = document.createElement("span");
+  timeLabel.classList.add("pose-widget__time-label");
+  timeLabel.textContent = "0:00.0 / 0:00.0";
+
+  controls.appendChild(playPauseBtn);
+  controls.appendChild(seekBar);
+  controls.appendChild(timeLabel);
+
+  // ============ KEYPOINT VISIBILITY SECTION (after controls) ============
+  const keypointSection = document.createElement("div");
+  keypointSection.classList.add(
+    "pose-widget__section",
+    "pose-widget__section--keypoints",
+    "pose-widget__section--hidden"
+  );
+
+  const keypointHeader = document.createElement("div");
+  keypointHeader.classList.add("pose-widget__section-header");
+
+  const keypointTitle = document.createElement("span");
+  keypointTitle.classList.add("pose-widget__section-title");
+  keypointTitle.textContent = "Keypoint Visibility";
+
+  keypointHeader.appendChild(keypointTitle);
+
+  const keypointContent = document.createElement("div");
+  keypointContent.classList.add("pose-widget__section-content");
+
+  const keypointTogglesWrapper = document.createElement("div");
+  keypointTogglesWrapper.classList.add("pose-widget__keypoint-toggles-wrapper");
+
+  const utilityRow = document.createElement("div");
+  utilityRow.classList.add("pose-widget__keypoint-toggles");
+
+  const keypointRow = document.createElement("div");
+  keypointRow.classList.add("pose-widget__keypoint-toggles");
+
+  keypointTogglesWrapper.appendChild(utilityRow);
+  keypointTogglesWrapper.appendChild(keypointRow);
+  keypointContent.appendChild(keypointTogglesWrapper);
+
+  keypointSection.appendChild(keypointHeader);
+  keypointSection.appendChild(keypointContent);
+
+  // ============ DISPLAY OPTIONS SECTION (after keypoints) ============
+  const displaySection = document.createElement("div");
+  displaySection.classList.add(
+    "pose-widget__section",
+    "pose-widget__section--display",
+    "pose-widget__section--hidden"
+  );
+
+  const displayHeader = document.createElement("div");
+  displayHeader.classList.add("pose-widget__section-header");
+
+  const displayTitle = document.createElement("span");
+  displayTitle.classList.add("pose-widget__section-title");
+  displayTitle.textContent = "Display Options";
+
+  displayHeader.appendChild(displayTitle);
+
+  const displayContent = document.createElement("div");
+  displayContent.classList.add("pose-widget__section-content");
+
+  const labelToggle = document.createElement("label");
+  labelToggle.classList.add("pose-widget__label-toggle");
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = model.get("show_labels");
+  labelToggle.appendChild(checkbox);
+  labelToggle.appendChild(document.createTextNode(" Show keypoint labels"));
+  displayContent.appendChild(labelToggle);
+
+  displaySection.appendChild(displayHeader);
+  displaySection.appendChild(displayContent);
+
+  // ============ STATE ============
   let isPlaying = false;
   let animationId = null;
   let visibleKeypoints = { ...model.get("visible_keypoints") };
 
-  /**
-   * Get current camera's data from all_camera_data.
-   */
+  // ============ FUNCTIONS ============
+
   function getCurrentCameraData() {
     const camera = model.get("selected_camera");
     const allData = model.get("all_camera_data");
     return allData[camera] || null;
   }
 
-  /**
-   * Update debug info display.
-   */
-  function updateDebug(frameIdx, extra = "") {
-    const camera = model.get("selected_camera");
-    const data = getCurrentCameraData();
-    const nFrames = data?.timestamps?.length || 0;
-    if (camera) {
-      debugDiv.textContent =
-        camera +
-        " | Frame: " +
-        frameIdx +
-        "/" +
-        nFrames +
-        " | Video: " +
-        video.videoWidth +
-        "x" +
-        video.videoHeight +
-        " | " +
-        extra;
-    } else {
-      debugDiv.textContent = "No camera selected";
-    }
-  }
-
-  /**
-   * Update time label with NWB session timestamps.
-   */
   function updateTimeLabel(frameIdx) {
     const data = getCurrentCameraData();
     const timestamps = data?.timestamps;
@@ -296,80 +343,148 @@ function render({ model, el }) {
     timeLabel.textContent = formatTime(currentTime) + " / " + formatTime(endTime);
   }
 
-  /**
-   * Update the settings panel with camera list and visibility.
-   */
-  function updateSettingsPanel() {
-    const cameras = model.get("available_cameras") || [];
-    const camerasInfo = model.get("available_cameras_info") || {};
-    const selectedCamera = model.get("selected_camera");
-    const settingsOpen = model.get("settings_open");
+  function updatePoseList() {
+    const poses = model.get("available_cameras") || [];
+    const posesInfo = model.get("available_cameras_info") || {};
+    const selectedPose = model.get("selected_camera");
 
-    // Toggle panel visibility
-    if (settingsOpen) {
-      settingsPanel.classList.add("pose-widget__settings-panel--open");
-    } else {
-      settingsPanel.classList.remove("pose-widget__settings-panel--open");
-    }
+    poseList.innerHTML = "";
 
-    // Clear and rebuild camera list
-    cameraList.innerHTML = "";
-
-    if (cameras.length === 0) {
+    if (poses.length === 0) {
       const emptyText = document.createElement("p");
       emptyText.classList.add("pose-widget__empty-text");
-      emptyText.textContent = "No cameras available.";
-      cameraList.appendChild(emptyText);
+      emptyText.textContent = "No pose estimations available.";
+      poseList.appendChild(emptyText);
       return;
     }
 
-    cameras.forEach((cam) => {
-      const info = camerasInfo[cam] || {};
-      const isSelected = cam === selectedCamera;
+    poses.forEach((pose) => {
+      const info = posesInfo[pose] || {};
+      const isSelected = pose === selectedPose;
 
-      const cameraItem = document.createElement("div");
-      cameraItem.classList.add("pose-widget__camera-item");
+      const poseItem = document.createElement("div");
+      poseItem.classList.add("pose-widget__pose-item");
       if (isSelected) {
-        cameraItem.classList.add("pose-widget__camera-item--selected");
+        poseItem.classList.add("pose-widget__pose-item--selected");
       }
 
       const radio = document.createElement("input");
       radio.type = "radio";
-      radio.name = "camera-select";
-      radio.id = "camera-" + cam;
-      radio.value = cam;
+      radio.name = "pose-select";
+      radio.id = "pose-" + pose;
+      radio.value = pose;
       radio.checked = isSelected;
       radio.addEventListener("change", () => {
         if (radio.checked) {
-          model.set("selected_camera", cam);
+          model.set("selected_camera", pose);
           model.save_changes();
         }
       });
 
       const label = document.createElement("label");
-      label.htmlFor = "camera-" + cam;
-      label.classList.add("pose-widget__camera-item-label");
-      label.textContent = cam;
+      label.htmlFor = "pose-" + pose;
+      label.classList.add("pose-widget__pose-item-label");
+      label.textContent = pose;
 
-      const timeRange = document.createElement("span");
-      timeRange.classList.add("pose-widget__camera-item-time");
+      const infoSpan = document.createElement("span");
+      infoSpan.classList.add("pose-widget__pose-item-info");
       if (info.start !== undefined && info.end !== undefined) {
-        timeRange.textContent = formatTime(info.start) + " - " + formatTime(info.end);
+        infoSpan.textContent =
+          formatTime(info.start) +
+          " - " +
+          formatTime(info.end) +
+          (info.keypoints ? " | " + info.keypoints.length + " keypoints" : "");
       }
 
-      const keypoints = document.createElement("span");
-      keypoints.classList.add("pose-widget__camera-item-keypoints");
-      if (info.keypoints) {
-        keypoints.textContent = info.keypoints.length + " keypoints";
-      }
+      poseItem.appendChild(radio);
+      poseItem.appendChild(label);
+      poseItem.appendChild(infoSpan);
 
-      cameraItem.appendChild(radio);
-      cameraItem.appendChild(label);
-      cameraItem.appendChild(timeRange);
-      cameraItem.appendChild(keypoints);
-
-      cameraList.appendChild(cameraItem);
+      poseList.appendChild(poseItem);
     });
+  }
+
+  function updateVideoSelect() {
+    const videos = model.get("available_videos") || [];
+    const videosInfo = model.get("available_videos_info") || {};
+    const selectedPose = model.get("selected_camera");
+    const cameraToVideo = model.get("camera_to_video") || {};
+    const currentVideoName = cameraToVideo[selectedPose] || "";
+
+    videoSelect.innerHTML = "";
+
+    // Add empty option
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "-- Select video --";
+    videoSelect.appendChild(emptyOption);
+
+    // Add video options
+    videos.forEach((videoName) => {
+      const option = document.createElement("option");
+      const videoInfo = videosInfo[videoName] || {};
+      option.value = videoName;
+      option.textContent = videoName;
+      if (videoInfo.start !== undefined && videoInfo.end !== undefined) {
+        option.textContent +=
+          " (" + formatTime(videoInfo.start) + " - " + formatTime(videoInfo.end) + ")";
+      }
+      videoSelect.appendChild(option);
+    });
+
+    videoSelect.value = currentVideoName;
+  }
+
+  function updateSectionVisibility() {
+    const selectedPose = model.get("selected_camera");
+    const cameraToVideo = model.get("camera_to_video") || {};
+    const currentVideoName = cameraToVideo[selectedPose] || "";
+    const data = getCurrentCameraData();
+
+    // Update selected labels
+    poseSelectedLabel.textContent = selectedPose ? selectedPose : "";
+    videoSelectedLabel.textContent = currentVideoName ? currentVideoName : "";
+
+    // Show video section when pose is selected
+    if (selectedPose) {
+      videoSection.classList.remove("pose-widget__section--hidden");
+      // Collapse pose section
+      poseSection.classList.add("pose-widget__section--collapsed");
+      poseToggleIcon.innerHTML = "";
+      poseToggleIcon.appendChild(createIcon("chevron-down"));
+    } else {
+      videoSection.classList.add("pose-widget__section--hidden");
+      poseSection.classList.remove("pose-widget__section--collapsed");
+      poseToggleIcon.innerHTML = "";
+      poseToggleIcon.appendChild(createIcon("chevron-up"));
+    }
+
+    // Collapse video section when video is selected
+    if (currentVideoName) {
+      videoSection.classList.add("pose-widget__section--collapsed");
+      videoToggleIcon.innerHTML = "";
+      videoToggleIcon.appendChild(createIcon("chevron-down"));
+    } else {
+      videoSection.classList.remove("pose-widget__section--collapsed");
+      videoToggleIcon.innerHTML = "";
+      videoToggleIcon.appendChild(createIcon("chevron-up"));
+    }
+
+    // Show keypoint and display sections when we have data and video
+    if (selectedPose && currentVideoName && data) {
+      keypointSection.classList.remove("pose-widget__section--hidden");
+      displaySection.classList.remove("pose-widget__section--hidden");
+    } else {
+      keypointSection.classList.add("pose-widget__section--hidden");
+      displaySection.classList.add("pose-widget__section--hidden");
+    }
+
+    // Update video container empty state
+    if (!selectedPose || !currentVideoName) {
+      videoContainer.classList.add("pose-widget__video-container--empty");
+    } else {
+      videoContainer.classList.remove("pose-widget__video-container--empty");
+    }
   }
 
   function updateToggleStyles() {
@@ -400,7 +515,6 @@ function render({ model, el }) {
     const metadata = data?.keypoint_metadata || {};
     if (Object.keys(metadata).length === 0) return;
 
-    // All button
     const allBtn = document.createElement("button");
     allBtn.textContent = "All";
     allBtn.classList.add(
@@ -415,7 +529,6 @@ function render({ model, el }) {
       drawPose();
     });
 
-    // None button
     const noneBtn = document.createElement("button");
     noneBtn.textContent = "None";
     noneBtn.classList.add(
@@ -433,7 +546,6 @@ function render({ model, el }) {
     utilityRow.appendChild(allBtn);
     utilityRow.appendChild(noneBtn);
 
-    // Individual keypoint buttons
     for (const [name, kp] of Object.entries(metadata)) {
       const btn = document.createElement("button");
       btn.textContent = name;
@@ -452,9 +564,6 @@ function render({ model, el }) {
     updateToggleStyles();
   }
 
-  /**
-   * Get current frame index based on video time.
-   */
   function getFrameIndex() {
     const data = getCurrentCameraData();
     const timestamps = data?.timestamps;
@@ -462,52 +571,35 @@ function render({ model, el }) {
     return findFrameIndex(timestamps, timestamps[0] + video.currentTime);
   }
 
-  /**
-   * Draw pose keypoints on canvas overlay.
-   */
   function drawPose() {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const selectedCamera = model.get("selected_camera");
-    if (!selectedCamera) {
-      updateDebug(0, "No camera selected");
-      return;
-    }
+    if (!selectedCamera) return;
 
     const data = getCurrentCameraData();
-    if (!data) {
-      updateDebug(0, "No pose data");
-      return;
-    }
+    if (!data) return;
 
     const metadata = data.keypoint_metadata;
     const coordinates = data.pose_coordinates;
     const timestamps = data.timestamps;
     const showLabels = model.get("show_labels");
 
-    if (!coordinates || !timestamps || timestamps.length === 0) {
-      updateDebug(0, "No pose data");
-      return;
-    }
+    if (!coordinates || !timestamps || timestamps.length === 0) return;
 
     const frameIdx = getFrameIndex();
 
-    if (!video.videoWidth || !video.videoHeight) {
-      updateDebug(frameIdx, "Loading video...");
-      return;
-    }
+    if (!video.videoWidth || !video.videoHeight) return;
 
     const scaleX = DISPLAY_WIDTH / video.videoWidth;
     const scaleY = DISPLAY_HEIGHT / video.videoHeight;
-
-    let drawnCount = 0;
 
     for (const [name, coords] of Object.entries(coordinates)) {
       if (visibleKeypoints[name] === false) continue;
 
       const coord = coords[frameIdx];
-      if (!coord) continue; // null means no data for this frame
+      if (!coord) continue;
 
       const x = coord[0] * scaleX;
       const y = coord[1] * scaleY;
@@ -520,7 +612,6 @@ function render({ model, el }) {
       ctx.strokeStyle = "#000";
       ctx.lineWidth = 1.5;
       ctx.stroke();
-      drawnCount++;
 
       if (showLabels && kp) {
         ctx.font = "bold 10px sans-serif";
@@ -531,7 +622,6 @@ function render({ model, el }) {
         ctx.fillText(kp.label, x + 6, y + 3);
       }
     }
-    updateDebug(frameIdx, "Drew " + drawnCount + " keypoints");
     updateTimeLabel(frameIdx);
   }
 
@@ -543,15 +633,15 @@ function render({ model, el }) {
   function updateLoadingState() {
     const isLoading = model.get("loading");
     const camera = model.get("selected_camera");
+    const cameraToVideo = model.get("camera_to_video") || {};
+    const currentVideoName = cameraToVideo[camera] || "";
     const data = getCurrentCameraData();
 
-    if (isLoading || (camera && !data)) {
-      // Show loading overlay, hide video
+    if (isLoading || (camera && currentVideoName && !data)) {
       loadingOverlay.classList.add("pose-widget__loading-overlay--visible");
       video.style.visibility = "hidden";
       canvas.style.visibility = "hidden";
     } else {
-      // Hide loading overlay, show video
       loadingOverlay.classList.remove("pose-widget__loading-overlay--visible");
       video.style.visibility = "visible";
       canvas.style.visibility = "visible";
@@ -560,13 +650,17 @@ function render({ model, el }) {
 
   function loadVideo() {
     const camera = model.get("selected_camera");
-    if (!camera) {
+    const cameraToVideo = model.get("camera_to_video") || {};
+    const videoName = cameraToVideo[camera];
+
+    if (!camera || !videoName) {
       video.src = "";
-      videoContainer.classList.add("pose-widget__video-container--empty");
       return;
     }
-    videoContainer.classList.remove("pose-widget__video-container--empty");
-    const videoUrl = model.get("camera_to_video")[camera];
+
+    const videoNameToUrl = model.get("video_name_to_url") || {};
+    const videoUrl = videoNameToUrl[videoName];
+
     if (videoUrl && video.src !== videoUrl) {
       video.src = videoUrl;
     }
@@ -578,40 +672,32 @@ function render({ model, el }) {
     playPauseBtn.appendChild(createIcon(playing ? "pause" : "play"));
   }
 
-  /**
-   * Switch to a new camera - updates UI immediately since all data is preloaded.
-   */
   function switchCamera() {
-    // Update seek bar max for new camera
     const data = getCurrentCameraData();
     seekBar.max = data?.timestamps?.length - 1 || 100;
-
-    // Recreate keypoint toggles for new camera
     createKeypointToggles();
-
-    // Load new video URL
     loadVideo();
-
-    // Draw immediately (data is already available)
     drawPose();
+    updateSectionVisibility();
   }
 
-  // Initialize
+  // ============ INITIALIZE ============
+  updatePoseList();
+  updateVideoSelect();
+  updateSectionVisibility();
   loadVideo();
-  createKeypointToggles();
-  updateSettingsPanel();
 
-  // Set initial seek bar max
   const initialData = getCurrentCameraData();
   if (initialData?.timestamps) {
     seekBar.max = initialData.timestamps.length - 1;
   }
 
+  // ============ EVENT LISTENERS ============
+
   video.addEventListener("loadedmetadata", drawPose);
   video.addEventListener("seeked", drawPose);
   video.addEventListener("timeupdate", drawPose);
 
-  // Listen for camera changes
   model.on("change:selected_camera", () => {
     if (isPlaying) {
       video.pause();
@@ -619,18 +705,23 @@ function render({ model, el }) {
       if (animationId) cancelAnimationFrame(animationId);
       isPlaying = false;
     }
+    updatePoseList();
+    updateVideoSelect();
     switchCamera();
-    updateSettingsPanel();
   });
 
-  model.on("change:settings_open", updateSettingsPanel);
-  model.on("change:available_cameras", updateSettingsPanel);
-  model.on("change:available_cameras_info", updateSettingsPanel);
+  model.on("change:available_cameras", updatePoseList);
+  model.on("change:available_videos", updateVideoSelect);
 
-  // Listen for lazy-loaded camera data
+  model.on("change:camera_to_video", () => {
+    updateSectionVisibility();
+    loadVideo();
+  });
+
   model.on("change:all_camera_data", () => {
     updateLoadingState();
     createKeypointToggles();
+    updateSectionVisibility();
     drawPose();
   });
 
@@ -641,12 +732,25 @@ function render({ model, el }) {
 
   model.on("change:loading", updateLoadingState);
 
+  videoSelect.addEventListener("change", () => {
+    const selectedVideo = videoSelect.value;
+    const selectedPose = model.get("selected_camera");
+    const newMapping = { ...model.get("camera_to_video") };
+
+    if (selectedVideo) {
+      newMapping[selectedPose] = selectedVideo;
+    } else {
+      delete newMapping[selectedPose];
+    }
+
+    model.set("camera_to_video", newMapping);
+    model.save_changes();
+  });
+
   playPauseBtn.addEventListener("click", () => {
     const selectedCamera = model.get("selected_camera");
-    if (!selectedCamera) {
-      // Open settings if no camera selected
-      model.set("settings_open", true);
-      model.save_changes();
+    const cameraToVideo = model.get("camera_to_video") || {};
+    if (!selectedCamera || !cameraToVideo[selectedCamera]) {
       return;
     }
     if (isPlaying) {
@@ -675,22 +779,15 @@ function render({ model, el }) {
     drawPose();
   });
 
-  settingsBtn.addEventListener("click", () => {
-    const isOpen = model.get("settings_open");
-    model.set("settings_open", !isOpen);
-    model.save_changes();
-  });
-
-  updateDebug(0, "Ready");
-  updateTimeLabel(0);
-
-  wrapper.appendChild(settingsPanel);
+  // ============ LAYOUT ============
+  wrapper.appendChild(poseSection);
+  wrapper.appendChild(videoSection);
   wrapper.appendChild(videoContainer);
-  wrapper.appendChild(debugDiv);
   wrapper.appendChild(controls);
+  wrapper.appendChild(keypointSection);
+  wrapper.appendChild(displaySection);
   el.appendChild(wrapper);
 
-  // Cleanup function
   return () => {
     if (animationId) {
       cancelAnimationFrame(animationId);

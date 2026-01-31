@@ -114,7 +114,6 @@ function render({ model, el }) {
   const playPauseBtn = document.createElement("button");
   playPauseBtn.classList.add("video-widget__button");
   playPauseBtn.appendChild(createIcon("play"));
-  playPauseBtn.appendChild(document.createTextNode(" Play All"));
 
   const settingsBtn = document.createElement("button");
   settingsBtn.classList.add("video-widget__button", "video-widget__settings-btn");
@@ -356,9 +355,6 @@ function render({ model, el }) {
   function updatePlayPauseButton(playing) {
     playPauseBtn.innerHTML = "";
     playPauseBtn.appendChild(createIcon(playing ? "pause" : "play"));
-    playPauseBtn.appendChild(
-      document.createTextNode(playing ? " Pause All" : " Play All")
-    );
   }
 
   /**

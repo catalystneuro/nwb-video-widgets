@@ -12,6 +12,7 @@ import traitlets
 from pynwb import NWBFile
 
 from nwb_video_widgets._utils import (
+    discover_pose_estimation_cameras,
     discover_video_series,
     get_pose_estimation_info,
     start_video_server,
@@ -80,7 +81,13 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     selected_camera = traitlets.Unicode("").tag(sync=True)
     available_cameras = traitlets.List([]).tag(sync=True)
     available_cameras_info = traitlets.Dict({}).tag(sync=True)
-    camera_to_video = traitlets.Dict({}).tag(sync=True)
+
+    # Video selection - users explicitly match cameras to videos
+    available_videos = traitlets.List([]).tag(sync=True)
+    available_videos_info = traitlets.Dict({}).tag(sync=True)
+    video_name_to_url = traitlets.Dict({}).tag(sync=True)  # Video name -> URL mapping
+    camera_to_video = traitlets.Dict({}).tag(sync=True)  # Camera -> video name mapping
+
     settings_open = traitlets.Bool(True).tag(sync=True)
 
     # Pose data for cameras - loaded lazily when selected
@@ -109,9 +116,6 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         # Compute video URLs from local files
         video_urls = self._get_video_urls_from_local(video_source)
 
-        # Get camera-to-video mapping using naming convention
-        camera_to_video_key = self._get_camera_to_video_mapping(nwbfile, video_source)
-
         # Parse keypoint_colors
         if isinstance(keypoint_colors, str):
             colormap_name = keypoint_colors
@@ -125,33 +129,22 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             raise ValueError("NWB file does not contain pose_estimation processing module")
         pose_estimation = nwbfile.processing["pose_estimation"]
 
-        # Find available cameras (those with both pose data AND video)
-        available_pose_cameras = set(pose_estimation.data_interfaces.keys())
-        camera_to_video = {}
-        available_cameras = []
-
-        for camera_name in camera_to_video_key.keys():
-            if camera_name not in available_pose_cameras:
-                continue
-            video_key = camera_to_video_key[camera_name]
-            video_url = video_urls.get(video_key, "")
-            if video_url:
-                camera_to_video[camera_name] = video_url
-                available_cameras.append(camera_name)
-
-        if not available_cameras:
-            raise ValueError(
-                f"No cameras have both pose data and video URLs. "
-                f"Pose cameras: {available_pose_cameras}, "
-                f"Video keys: {list(video_urls.keys())}"
-            )
+        # Get all PoseEstimation containers (excludes Skeletons and other metadata)
+        pose_containers = discover_pose_estimation_cameras(nwbfile)
+        available_cameras = list(pose_containers.keys())
 
         # Get camera info for settings panel display
         available_cameras_info = get_pose_estimation_info(nwbfile)
-        # Filter to only available cameras
-        available_cameras_info = {
-            k: v for k, v in available_cameras_info.items() if k in available_cameras
-        }
+
+        # Get ALL available videos (sorted alphabetically)
+        available_videos = sorted(video_urls.keys())
+        available_videos_info = self._get_video_info(video_source)
+
+        # Video name to URL mapping (sent to JS for URL resolution)
+        video_name_to_url = video_urls
+
+        # Start with empty mapping - users explicitly select videos
+        camera_to_video = {}
 
         # Select default camera - start with empty to show settings
         if default_camera and default_camera in available_cameras:
@@ -168,6 +161,9 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             selected_camera=selected_camera,
             available_cameras=available_cameras,
             available_cameras_info=available_cameras_info,
+            available_videos=available_videos,
+            available_videos_info=available_videos_info,
+            video_name_to_url=video_name_to_url,
             camera_to_video=camera_to_video,
             all_camera_data={},  # Start empty, load lazily
             visible_keypoints={},  # Populated as cameras are loaded
@@ -206,29 +202,36 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             self.loading = False
 
     @staticmethod
-    def _get_camera_to_video_mapping(
-        pose_nwbfile: NWBFile, video_nwbfile: NWBFile
-    ) -> dict[str, str]:
-        """Auto-map pose estimation camera names to video series names.
+    def _get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
+        """Get metadata for all video series."""
+        video_series = discover_video_series(nwbfile)
+        info = {}
 
-        Uses the naming convention: camera name prefixed with "Video"
-        - 'LeftCamera' -> 'VideoLeftCamera'
-        - 'BodyCamera' -> 'VideoBodyCamera'
+        for name, series in video_series.items():
+            timestamps = None
+            if series.timestamps is not None:
+                timestamps = series.timestamps[:]
+            elif series.starting_time is not None and series.rate is not None:
+                n_frames = series.data.shape[0] if hasattr(series.data, "shape") else 0
+                timestamps = np.arange(n_frames) / series.rate + series.starting_time
 
-        Only returns mappings where both the camera and corresponding video exist.
-        """
-        from nwb_video_widgets._utils import discover_pose_estimation_cameras
+            if timestamps is not None and len(timestamps) > 0:
+                info[name] = {
+                    "start": float(timestamps[0]),
+                    "end": float(timestamps[-1]),
+                    "frames": len(timestamps),
+                }
+            else:
+                info[name] = {"start": 0, "end": 0, "frames": 0}
 
-        cameras = discover_pose_estimation_cameras(pose_nwbfile)
-        video_series = discover_video_series(video_nwbfile)
+        return info
 
-        mapping = {}
-        for camera_name in cameras:
-            video_name = f"Video{camera_name}"
-            if video_name in video_series:
-                mapping[camera_name] = video_name
-
-        return mapping
+    @traitlets.observe("camera_to_video")
+    def _on_camera_to_video_changed(self, change):
+        """Update video URL when user changes camera-to-video mapping."""
+        # The camera_to_video dict now stores video URLs directly
+        # This observer can be used for any side effects needed
+        pass
 
     @staticmethod
     def _get_video_urls_from_local(nwbfile: NWBFile) -> dict[str, str]:
