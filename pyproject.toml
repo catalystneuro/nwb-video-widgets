@@ -37,13 +37,18 @@ dandi = ["dandi>=0.60.0", "remfile>=0.1.13", "h5py"]
 
 
 [dependency-groups]
-dev = [
+test = [
     "pytest>=7.0",
     "pytest-cov",
+]
+
+dev = [
+    "pre-commit",
     "ruff",
     "jupyterlab",
     "ipykernel>=7.1.0",
     "opencv-python-headless",
+    {include-group = "test"},
 ]
 
 [project.urls]
@@ -65,3 +70,20 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+[tool.ruff]
+
+[tool.ruff.lint]
+select = [
+    "F401",  # Unused import
+    "I",  # All isort rules
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"**__init__.py" = ["F401", "I"]
+"tests/**" = ["D"]
+
+[tool.ruff.lint.isort]
+relative-imports-order = "closest-to-furthest"
+known-first-party = ["nwb_video_widgets"]

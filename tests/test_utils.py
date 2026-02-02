@@ -103,7 +103,7 @@ class TestGetVideoTimestamps:
         nwbfile.add_acquisition(image_series)
 
         result = get_video_timestamps(nwbfile)
- 
+
         assert "VideoCamera" in result
         assert result["VideoCamera"] == [5.0]
 
@@ -114,7 +114,6 @@ class TestGetVideoTimestamps:
         image_series = ImageSeries(
             name="VideoCamera",
             format="external",
-            
             external_file=["./video.mp4"],
             rate=30.0,
         )

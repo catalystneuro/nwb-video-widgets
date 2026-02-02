@@ -21,9 +21,15 @@ def test_dandi_video_path_construction():
     dandiset = client.get_dandiset("000409", "draft")
 
     session_eid = "64e3fb86-928c-4079-865c-b364205b502e"
-    session_assets = [asset for asset in dandiset.get_assets() if session_eid in asset.path]
-    raw_asset = next((asset for asset in session_assets if "desc-raw" in asset.path), None)
-    processed_asset = next((asset for asset in session_assets if "desc-processed" in asset.path), None)
+    session_assets = [
+        asset for asset in dandiset.get_assets() if session_eid in asset.path
+    ]
+    raw_asset = next(
+        (asset for asset in session_assets if "desc-raw" in asset.path), None
+    )
+    processed_asset = next(
+        (asset for asset in session_assets if "desc-processed" in asset.path), None
+    )
 
     # This would fail on Windows before the fix with:
     # NotFoundError: No asset at path 'sub-NYU-46\\sub-NYU-46_ses-...\\video.mp4'

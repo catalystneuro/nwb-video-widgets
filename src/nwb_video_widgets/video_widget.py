@@ -159,7 +159,9 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
                     timestamps = obj.timestamps[:]
                 elif obj.starting_time is not None and obj.rate is not None:
                     # Compute timestamps from starting_time and rate
-                    n_frames = len(obj.external_file) if hasattr(obj, 'dimension') else 1
+                    n_frames = (
+                        len(obj.external_file) if hasattr(obj, "dimension") else 1
+                    )
                     # For external files, we may not know frame count upfront
                     # Use a reasonable estimate or just store start/rate info
                     timestamps = [obj.starting_time]

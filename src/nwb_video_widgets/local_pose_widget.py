@@ -126,7 +126,9 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
 
         # Get pose estimation container
         if "pose_estimation" not in nwbfile.processing:
-            raise ValueError("NWB file does not contain pose_estimation processing module")
+            raise ValueError(
+                "NWB file does not contain pose_estimation processing module"
+            )
         pose_estimation = nwbfile.processing["pose_estimation"]
 
         # Get all PoseEstimation containers (excludes Skeletons and other metadata)

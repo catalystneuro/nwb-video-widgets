@@ -1,7 +1,6 @@
 """Integration tests for local NWB file handling."""
 
 import urllib.request
-from pathlib import Path
 
 import numpy as np
 import pytest
