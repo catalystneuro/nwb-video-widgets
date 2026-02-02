@@ -67,6 +67,70 @@ widget = NWBLocalVideoPlayer(nwbfile)
 widget
 ```
 
+### Fixed Grid Layout
+
+When you know exactly which videos you want to display and how to arrange them, use the `video_grid` parameter to bypass the interactive settings panel. This is useful for:
+
+- Reproducible notebooks where you want consistent output
+- Presentations or demos with predetermined layouts
+- Embedding widgets in dashboards or reports
+
+The `video_grid` parameter accepts a 2D list where each inner list represents a row of videos:
+
+```python
+# Single row of three cameras
+widget = NWBLocalVideoPlayer(
+    nwbfile,
+    video_grid=[["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]]
+)
+
+# 2x2 grid layout
+widget = NWBLocalVideoPlayer(
+    nwbfile,
+    video_grid=[
+        ["VideoLeftCamera", "VideoRightCamera"],
+        ["VideoBodyCamera", "VideoTopCamera"],
+    ]
+)
+
+# Asymmetric grid (2 videos on top, 1 on bottom)
+widget = NWBLocalVideoPlayer(
+    nwbfile,
+    video_grid=[
+        ["VideoLeftCamera", "VideoRightCamera"],
+        ["VideoBodyCamera"],
+    ]
+)
+```
+
+The same parameter works with `NWBDANDIVideoPlayer`:
+
+```python
+widget = NWBDANDIVideoPlayer(
+    asset=asset,
+    video_grid=[["VideoLeftCamera", "VideoRightCamera"]]
+)
+```
+
+Video names that don't exist in the NWB file are silently skipped.
+
+### Custom Video Labels
+
+By default, the video name from the NWB file is displayed under each video. Use the `video_labels` parameter to provide custom display names:
+
+```python
+widget = NWBLocalVideoPlayer(
+    nwbfile,
+    video_grid=[["VideoLeftCamera", "VideoRightCamera"]],
+    video_labels={
+        "VideoLeftCamera": "Left",
+        "VideoRightCamera": "Right",
+    }
+)
+```
+
+Videos not in the dictionary will display their original name.
+
 ---
 
 ## Pose Estimation Widgets

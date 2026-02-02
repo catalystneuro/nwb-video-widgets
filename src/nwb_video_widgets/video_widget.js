@@ -394,6 +394,17 @@ function render({ model, el }) {
     const urls = model.get("video_urls");
     const selectedVideos = model.get("selected_videos") || [];
     const layoutMode = model.get("layout_mode") || "row";
+    const gridLayout = model.get("grid_layout") || [];
+
+    // Check if we're in fixed grid mode (grid_layout is non-empty)
+    const isFixedGridMode = gridLayout.length > 0;
+
+    // Hide/show settings button based on mode
+    if (isFixedGridMode) {
+      settingsBtn.style.display = "none";
+    } else {
+      settingsBtn.style.display = "";
+    }
 
     // Filter to only selected videos that have URLs
     const videosToShow = selectedVideos.filter((name) => urls[name]);
@@ -406,25 +417,47 @@ function render({ model, el }) {
       return;
     }
 
-    // Calculate grid dimensions based on layout mode
-    const { rows: numRows, cols: numCols } = calculateGridDimensions(
-      layoutMode,
-      videosToShow.length
-    );
+    let numRows, numCols;
+    let videoPositions = []; // Array of {name, rowIdx, colIdx}
+
+    if (isFixedGridMode) {
+      // Fixed grid mode - use 2D layout directly
+      numRows = gridLayout.length;
+      numCols = Math.max(...gridLayout.map((row) => row.length));
+
+      // Build positions from grid_layout
+      gridLayout.forEach((row, rowIdx) => {
+        row.forEach((name, colIdx) => {
+          if (urls[name]) {
+            videoPositions.push({ name, rowIdx, colIdx });
+          }
+        });
+      });
+    } else {
+      // Interactive mode - use selected_videos + layout_mode
+      const dims = calculateGridDimensions(layoutMode, videosToShow.length);
+      numRows = dims.rows;
+      numCols = dims.cols;
+
+      // Build positions from selected_videos order
+      videosToShow.forEach((name, index) => {
+        const rowIdx = Math.floor(index / numCols);
+        const colIdx = index % numCols;
+        videoPositions.push({ name, rowIdx, colIdx });
+      });
+    }
 
     gridContainer.style.gridTemplateColumns = "repeat(" + numCols + ", auto)";
     gridContainer.style.gridTemplateRows = "repeat(" + numRows + ", auto)";
 
-    // Place videos in grid cells based on layout mode
-    videosToShow.forEach((name, index) => {
+    // Place videos in grid cells
+    videoPositions.forEach(({ name, rowIdx, colIdx }) => {
       const url = urls[name];
-      const rowIdx = Math.floor(index / numCols);
-      const colIdx = index % numCols;
 
       const videoCell = document.createElement("div");
       videoCell.classList.add("video-widget__video-cell");
-      videoCell.style.gridRow = rowIdx + 1;
-      videoCell.style.gridColumn = colIdx + 1;
+      videoCell.style.gridRow = String(rowIdx + 1);
+      videoCell.style.gridColumn = String(colIdx + 1);
 
       const videoContainer = document.createElement("div");
       videoContainer.classList.add("video-widget__video-container");
@@ -463,8 +496,9 @@ function render({ model, el }) {
       videoContainer.appendChild(video);
       videoContainer.appendChild(loadingDiv);
 
+      const videoLabels = model.get("video_labels") || {};
       const label = document.createElement("p");
-      label.textContent = name.replace("Video", "").replace("Camera", "");
+      label.textContent = videoLabels[name] || name;
       label.classList.add("video-widget__video-label");
 
       videoCell.appendChild(videoContainer);
@@ -544,6 +578,7 @@ function render({ model, el }) {
     updateSettingsPanel();
   });
   model.on("change:layout_mode", updateVideos);
+  model.on("change:grid_layout", updateVideos);
   model.on("change:settings_open", updateSettingsPanel);
   model.on("change:available_videos", updateSettingsPanel);
 

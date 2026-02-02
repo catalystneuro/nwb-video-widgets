@@ -1,7 +1,10 @@
 """Local NWB video player widget."""
 
+from __future__ import annotations
+
 import pathlib
 from pathlib import Path
+from typing import Optional
 
 import anywidget
 import traitlets
@@ -28,14 +31,41 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
     nwbfile : pynwb.NWBFile
         NWB file containing video ImageSeries in acquisition. Must have been
         loaded from disk (i.e., nwbfile.read_io must not be None).
+    video_grid : list[list[str]], optional
+        A 2D grid layout specifying which videos to display and where.
+        Each inner list represents a row of videos. When provided, bypasses
+        the interactive settings panel and displays videos in the specified
+        grid arrangement. Video names that don't exist are silently skipped.
+    video_labels : dict[str, str], optional
+        Mapping of video names to custom display labels. If a video name is
+        not in the dictionary, the original video name is displayed.
 
     Example
     -------
+    Interactive mode (default):
+
     >>> from pynwb import NWBHDF5IO
     >>> with NWBHDF5IO("experiment.nwb", "r") as io:
     ...     nwbfile = io.read()
     ...     widget = NWBLocalVideoPlayer(nwbfile)
     ...     display(widget)
+
+    Fixed grid mode (single row):
+
+    >>> widget = NWBLocalVideoPlayer(
+    ...     nwbfile,
+    ...     video_grid=[["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]]
+    ... )
+
+    Fixed grid mode (2x2 grid):
+
+    >>> widget = NWBLocalVideoPlayer(
+    ...     nwbfile,
+    ...     video_grid=[
+    ...         ["VideoLeftCamera", "VideoRightCamera"],
+    ...         ["VideoBodyCamera"],
+    ...     ]
+    ... )
 
     Raises
     ------
@@ -49,6 +79,8 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
     selected_videos = traitlets.List([]).tag(sync=True)
     layout_mode = traitlets.Unicode("row").tag(sync=True)
     settings_open = traitlets.Bool(False).tag(sync=True)
+    grid_layout = traitlets.List([]).tag(sync=True)
+    video_labels = traitlets.Dict({}).tag(sync=True)
 
     _esm = pathlib.Path(__file__).parent / "video_widget.js"
     _css = pathlib.Path(__file__).parent / "video_widget.css"
@@ -56,22 +88,50 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
     def __init__(
         self,
         nwbfile: NWBFile,
+        video_grid: Optional[list[list[str]]] = None,
+        video_labels: Optional[dict[str, str]] = None,
         **kwargs,
     ):
         video_urls = self.get_video_urls_from_local(nwbfile)
         video_timestamps = get_video_timestamps(nwbfile)
         available_videos = get_video_info(nwbfile)
+        video_labels = video_labels or {}
 
-        # Start with no videos selected to avoid initial buffering
-        super().__init__(
-            video_urls=video_urls,
-            video_timestamps=video_timestamps,
-            available_videos=available_videos,
-            selected_videos=[],
-            layout_mode="grid",
-            settings_open=True,
-            **kwargs,
-        )
+        if video_grid is not None and len(video_grid) > 0:
+            # Fixed grid mode - bypass settings panel
+            # Filter to only include videos that exist in video_urls
+            filtered_grid = [
+                [v for v in row if v in video_urls]
+                for row in video_grid
+            ]
+            # Remove empty rows
+            filtered_grid = [row for row in filtered_grid if row]
+            # Flatten grid to get selected videos (preserving order)
+            selected = [v for row in filtered_grid for v in row]
+            super().__init__(
+                video_urls=video_urls,
+                video_timestamps=video_timestamps,
+                available_videos=available_videos,
+                selected_videos=selected,
+                layout_mode="grid",
+                settings_open=False,
+                grid_layout=filtered_grid,
+                video_labels=video_labels,
+                **kwargs,
+            )
+        else:
+            # Interactive mode (current behavior)
+            super().__init__(
+                video_urls=video_urls,
+                video_timestamps=video_timestamps,
+                available_videos=available_videos,
+                selected_videos=[],
+                layout_mode="grid",
+                settings_open=True,
+                grid_layout=[],
+                video_labels=video_labels,
+                **kwargs,
+            )
 
     @staticmethod
     def get_video_urls_from_local(nwbfile: NWBFile) -> dict[str, str]:
