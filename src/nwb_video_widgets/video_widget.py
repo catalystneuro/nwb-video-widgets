@@ -127,9 +127,7 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
 
                 video_asset = dandiset.get_asset_by_path(full_path)
                 if video_asset is not None:
-                    video_urls[name] = video_asset.get_content_url(
-                        follow_redirects=1, strip_query=True
-                    )
+                    video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
 
         return video_urls
 
@@ -159,9 +157,7 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
                     timestamps = obj.timestamps[:]
                 elif obj.starting_time is not None and obj.rate is not None:
                     # Compute timestamps from starting_time and rate
-                    n_frames = (
-                        len(obj.external_file) if hasattr(obj, "dimension") else 1
-                    )
+                    n_frames = len(obj.external_file) if hasattr(obj, "dimension") else 1
                     # For external files, we may not know frame count upfront
                     # Use a reasonable estimate or just store start/rate info
                     timestamps = [obj.starting_time]

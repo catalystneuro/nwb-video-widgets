@@ -146,9 +146,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         video_source_asset = video_asset if video_asset is not None else asset
 
         # Compute video URLs from DANDI
-        video_urls = self._get_video_urls_from_dandi(
-            video_source_nwbfile, video_source_asset
-        )
+        video_urls = self._get_video_urls_from_dandi(video_source_nwbfile, video_source_asset)
 
         # Parse keypoint_colors
         if isinstance(keypoint_colors, str):
@@ -160,9 +158,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
         # Get pose estimation container
         if "pose_estimation" not in nwbfile.processing:
-            raise ValueError(
-                "NWB file does not contain pose_estimation processing module"
-            )
+            raise ValueError("NWB file does not contain pose_estimation processing module")
         pose_estimation = nwbfile.processing["pose_estimation"]
 
         # Get all PoseEstimation containers (excludes Skeletons and other metadata)
@@ -298,16 +294,12 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
             video_asset = dandiset.get_asset_by_path(full_path)
             if video_asset is not None:
-                video_urls[name] = video_asset.get_content_url(
-                    follow_redirects=1, strip_query=True
-                )
+                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
 
         return video_urls
 
     @staticmethod
-    def _load_camera_pose_data(
-        pose_estimation, camera_name: str, cmap, custom_colors: dict
-    ) -> dict:
+    def _load_camera_pose_data(pose_estimation, camera_name: str, cmap, custom_colors: dict) -> dict:
         """Load pose data for a single camera.
 
         Returns a dict with:
@@ -324,9 +316,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         coordinates = {}
         timestamps = None
 
-        for index, (series_name, series) in enumerate(
-            camera_pose.pose_estimation_series.items()
-        ):
+        for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
             # Get coordinates - iterate to build list without memory duplication

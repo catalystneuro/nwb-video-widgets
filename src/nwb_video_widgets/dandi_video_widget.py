@@ -207,8 +207,6 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
 
             video_asset = dandiset.get_asset_by_path(full_path)
             if video_asset is not None:
-                video_urls[name] = video_asset.get_content_url(
-                    follow_redirects=1, strip_query=True
-                )
+                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
 
         return video_urls

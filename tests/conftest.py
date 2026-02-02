@@ -78,9 +78,7 @@ def nwbfile_with_explicit_timestamps(tmp_path, synthetic_video_path):
     shutil.copy(synthetic_video_path, video_copy)
 
     timestamps = {"VideoCamera": np.linspace(0.0, 1.0, 30)}
-    nwbfile = create_nwbfile_with_external_videos(
-        {"VideoCamera": video_copy}, timestamps=timestamps
-    )
+    nwbfile = create_nwbfile_with_external_videos({"VideoCamera": video_copy}, timestamps=timestamps)
     nwb_path = tmp_path / "test.nwb"
 
     with NWBHDF5IO(nwb_path, "w") as io:

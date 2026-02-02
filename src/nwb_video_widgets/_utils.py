@@ -139,9 +139,7 @@ class _RangeRequestHandler(SimpleHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
                 self.send_header("Access-Control-Allow-Headers", "Range")
-                self.send_header(
-                    "Access-Control-Expose-Headers", "Content-Range, Content-Length"
-                )
+                self.send_header("Access-Control-Expose-Headers", "Content-Range, Content-Length")
                 self.end_headers()
                 return f
             except (ValueError, IOError):
@@ -153,9 +151,7 @@ class _RangeRequestHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         """Add CORS headers to all responses."""
         # Only add if not already added (for non-range requests)
-        if not self._headers_buffer or b"Access-Control-Allow-Origin" not in b"".join(
-            self._headers_buffer
-        ):
+        if not self._headers_buffer or b"Access-Control-Allow-Origin" not in b"".join(self._headers_buffer):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD")
             self.send_header("Access-Control-Allow-Headers", "Range")
@@ -306,8 +302,7 @@ def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:
     for camera_name, pose_estimation in cameras.items():
         # Get keypoint names (remove PoseEstimationSeries suffix)
         keypoint_names = [
-            name.replace("PoseEstimationSeries", "")
-            for name in pose_estimation.pose_estimation_series.keys()
+            name.replace("PoseEstimationSeries", "") for name in pose_estimation.pose_estimation_series.keys()
         ]
 
         # Get timestamps from the first pose estimation series

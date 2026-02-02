@@ -154,8 +154,7 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
         """
         if nwbfile.read_io is None or not hasattr(nwbfile.read_io, "source"):
             raise ValueError(
-                "NWB file must be loaded from disk to resolve video paths. "
-                "The nwbfile.read_io attribute is None."
+                "NWB file must be loaded from disk to resolve video paths. The nwbfile.read_io attribute is None."
             )
 
         nwbfile_path = Path(nwbfile.read_io.source)

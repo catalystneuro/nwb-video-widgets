@@ -126,9 +126,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
 
         # Get pose estimation container
         if "pose_estimation" not in nwbfile.processing:
-            raise ValueError(
-                "NWB file does not contain pose_estimation processing module"
-            )
+            raise ValueError("NWB file does not contain pose_estimation processing module")
         pose_estimation = nwbfile.processing["pose_estimation"]
 
         # Get all PoseEstimation containers (excludes Skeletons and other metadata)
@@ -244,8 +242,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         """
         if nwbfile.read_io is None or not hasattr(nwbfile.read_io, "source"):
             raise ValueError(
-                "NWB file must be loaded from disk to resolve video paths. "
-                "The nwbfile.read_io attribute is None."
+                "NWB file must be loaded from disk to resolve video paths. The nwbfile.read_io attribute is None."
             )
 
         nwbfile_path = Path(nwbfile.read_io.source)
@@ -280,9 +277,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         return video_urls
 
     @staticmethod
-    def _load_camera_pose_data(
-        pose_estimation, camera_name: str, cmap, custom_colors: dict
-    ) -> dict:
+    def _load_camera_pose_data(pose_estimation, camera_name: str, cmap, custom_colors: dict) -> dict:
         """Load pose data for a single camera.
 
         Returns a dict with:
@@ -299,9 +294,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         coordinates = {}
         timestamps = None
 
-        for index, (series_name, series) in enumerate(
-            camera_pose.pose_estimation_series.items()
-        ):
+        for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
             # Get coordinates - iterate to build list without memory duplication

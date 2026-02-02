@@ -10,9 +10,7 @@ class TestVideoPathDiscovery:
 
     def test_discover_single_video(self, nwbfile_with_single_video):
         """Test discovering a single external video."""
-        video_urls = NWBLocalVideoPlayer.get_video_urls_from_local(
-            nwbfile_with_single_video
-        )
+        video_urls = NWBLocalVideoPlayer.get_video_urls_from_local(nwbfile_with_single_video)
 
         assert len(video_urls) == 1
         assert "VideoCamera" in video_urls
@@ -21,9 +19,7 @@ class TestVideoPathDiscovery:
 
     def test_discover_multiple_videos(self, nwbfile_with_multiple_videos):
         """Test discovering multiple external videos."""
-        video_urls = NWBLocalVideoPlayer.get_video_urls_from_local(
-            nwbfile_with_multiple_videos
-        )
+        video_urls = NWBLocalVideoPlayer.get_video_urls_from_local(nwbfile_with_multiple_videos)
 
         assert len(video_urls) == 3
         assert "VideoLeftCamera" in video_urls
