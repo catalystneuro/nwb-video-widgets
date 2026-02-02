@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nwb-video-widgets"
-version = "0.1.1"
+version = "0.1.2"
 description = "Interactive Jupyter widgets for NWB video and pose visualization"
 readme = "README.md"
 license = "MIT"
@@ -18,11 +18,13 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: JavaScript",
 ]
-requires-python = ">=3.10"
+# Upper bound needed because compiled dependencies (e.g., h5py) don't have Python 3.14 wheels yet
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "anywidget>=0.9.0",
     "pynwb",
@@ -32,11 +34,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dandi = ["dandi>=0.60.0", "remfile>=0.1.13", "h5py"]
-test = [
-    "pytest>=7.0",
-    "pytest-cov",
-    "opencv-python-headless",
-]
+
 
 [dependency-groups]
 dev = [
