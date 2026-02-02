@@ -208,3 +208,7 @@ __marimo__/
 widget_notebook.ipynb
 design_docs/drafts
 
+# Original large GIFs (use preprocessed versions instead)
+assets/pose_estimation..gif
+assets/video_widget.gif
+
