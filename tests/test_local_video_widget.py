@@ -78,19 +78,18 @@ class TestWidgetCreation:
         assert len(widget.video_urls) == 1
         assert "VideoCamera" in widget.video_urls
 
-    def test_create_widget_custom_layout(self, nwbfile_with_multiple_videos):
-        """Test creating widget with custom grid layout."""
-        custom_layout = [["VideoLeftCamera", "VideoRightCamera"]]
-        widget = NWBLocalVideoPlayer(
-            nwbfile_with_multiple_videos, grid_layout=custom_layout
-        )
+    def test_create_widget_multiple_videos(self, nwbfile_with_multiple_videos):
+        """Test creating widget with multiple videos."""
+        widget = NWBLocalVideoPlayer(nwbfile_with_multiple_videos)
 
-        assert widget.grid_layout == custom_layout
+        assert len(widget.video_urls) == 3
+        assert len(widget.available_videos) == 3
+        assert widget.layout_mode == "grid"
 
-    def test_default_grid_layout(self, nwbfile_with_single_video):
-        """Test that default grid layout is applied."""
+    def test_default_layout_mode(self, nwbfile_with_single_video):
+        """Test that default layout mode is grid."""
         widget = NWBLocalVideoPlayer(nwbfile_with_single_video)
 
-        assert widget.grid_layout == [
-            ["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]
-        ]
+        assert widget.layout_mode == "grid"
+        assert widget.settings_open is True
+        assert widget.selected_videos == []
