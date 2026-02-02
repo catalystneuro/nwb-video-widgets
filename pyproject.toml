@@ -28,8 +28,6 @@ dependencies = [
     "pynwb",
     "numpy",
     "matplotlib",
-    "dandi>=0.74.1",
-    "remfile>=0.1.13",
 ]
 
 [project.optional-dependencies]

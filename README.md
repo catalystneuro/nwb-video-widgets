@@ -13,11 +13,13 @@ Interactive Jupyter widgets for NWB video and pose estimation visualization. Bui
 - [Pose Estimation Widgets](#pose-estimation-widgets)
 ## Installation
 
+For local only NWB file usage:
+
 ```bash
 pip install nwb-video-widgets
 ```
 
-For DANDI integration:
+For DANDI integration and streaming support:
 
 ```bash
 pip install nwb-video-widgets[dandi]
