@@ -1,0 +1,47 @@
+name: Assess file changes
+
+on:
+  workflow_call:
+    outputs:
+      SOURCE_CHANGED:
+        description: "Whether source files were changed"
+        value: ${{ jobs.build.outputs.SOURCE_CHANGED }}
+      CHANGELOG_UPDATED:
+        description: "Whether CHANGELOG.md was updated"
+        value: ${{ jobs.build.outputs.CHANGELOG_UPDATED }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      SOURCE_CHANGED: ${{ steps.assess-changes.outputs.SOURCE_CHANGED }}
+      CHANGELOG_UPDATED: ${{ steps.assess-changes.outputs.CHANGELOG_UPDATED }}
+
+    name: Assess changed files
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v46.0.1
+
+      - name: Assess changes
+        id: assess-changes
+        run: |
+          echo "SOURCE_CHANGED=false" >> $GITHUB_OUTPUT
+          echo "CHANGELOG_UPDATED=false" >> $GITHUB_OUTPUT
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            echo $file
+            if [[ $file == "src/"* || $file == "tests/"* || $file == "pyproject.toml" || $file == ".github/"* ]]
+            then
+              echo "Source changed"
+              echo "SOURCE_CHANGED=true" >> $GITHUB_OUTPUT
+            fi
+            if [[ $file == "CHANGELOG.md" ]]
+            then
+              echo "Changelog updated"
+              echo "CHANGELOG_UPDATED=true" >> $GITHUB_OUTPUT
+            fi
+          done
