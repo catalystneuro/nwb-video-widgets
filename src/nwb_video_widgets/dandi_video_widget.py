@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pathlib
-from pathlib import PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import anywidget
@@ -195,8 +195,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
         client = DandiAPIClient()
         dandiset = client.get_dandiset(asset.dandiset_id, asset.version_id)
 
-        # Use PurePosixPath because DANDI paths always use forward slashes
-        nwb_parent = PurePosixPath(asset.path).parent
+        nwb_parent = Path(asset.path).parent
         video_series = discover_video_series(nwbfile)
         video_urls = {}
 
