@@ -9,94 +9,123 @@ Interactive Jupyter widgets for NWB video and pose estimation visualization. Bui
 ## Table of Contents
 
 - [Installation](#installation)
-- [Widgets](#widgets)
-  - [NWBPoseEstimationWidget](#nwbposeestimationwidget)
-  - [NWBFileVideoPlayer](#nwbfilevideoplayer)
-- [Development](#development)
-- [License](#license)
-
+- [Video Player Widgets](#video-player-widgets)
+- [Pose Estimation Widgets](#pose-estimation-widgets)
 ## Installation
 
 ```bash
 pip install nwb-video-widgets
 ```
 
-For DANDI integration (required for `NWBFileVideoPlayer` with DANDI assets):
+For DANDI integration:
 
 ```bash
 pip install nwb-video-widgets[dandi]
 ```
 
-## Widgets
+## Video Player Widgets
 
-### NWBPoseEstimationWidget
-
-Overlays DeepLabCut pose estimation keypoints on streaming video with support for multiple cameras.
-
-![Pose Estimation Widget Demo](assets/pose_estimation_preprocessed.gif)
-
-**Features:**
-
-- Multi-camera support with instant camera switching
-- Keypoint visibility toggles (All/None/individual)
-- Label display toggle
-- Session time display (NWB timestamps)
-- Custom keypoint colors via colormap or explicit hex values
-
-**Basic Usage:**
-
-```python
-from nwb_video_widgets import NWBPoseEstimationWidget
-
-widget = NWBPoseEstimationWidget(
-    nwbfile=nwbfile_processed,
-    video_urls=video_s3_urls,
-    camera_to_video_key={
-        "LeftCamera": "VideoLeftCamera",
-        "BodyCamera": "VideoBodyCamera",
-        "RightCamera": "VideoRightCamera",
-    },
-    keypoint_colors="tab10",  # or {"LeftPaw": "#FF0000", ...}
-)
-widget
-```
-
-**Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `nwbfile` | `NWBFile` | NWB file containing pose estimation data |
-| `video_urls` | `dict[str, str]` | Mapping of video keys to URLs |
-| `camera_to_video_key` | `dict[str, str]` | Maps camera names to video keys |
-| `keypoint_colors` | `str` or `dict` | Matplotlib colormap name or explicit color mapping |
-
----
-
-### NWBFileVideoPlayer
-
-Multi-camera synchronized video player with configurable grid layout.
+Multi-camera synchronized video player with configurable layout (Row, Column, or Grid).
 
 ![Video Widget Demo](assets/video_widget_preprocessed.gif)
 
 **Features:**
 
-- Configurable grid layout for multiple cameras
+- Interactive settings panel for video selection
+- Multiple layout modes (Row, Column, Grid)
 - Synchronized playback across all videos
 - Session time display with NWB timestamps
-- Automatic DANDI S3 URL resolution
 
-**Basic Usage:**
+### DANDI Streaming
+
+Use `NWBDANDIVideoPlayer` for videos hosted on DANDI:
 
 ```python
-from nwb_video_widgets import NWBFileVideoPlayer
+from dandi.dandiapi import DandiAPIClient
+from nwb_video_widgets import NWBDANDIVideoPlayer
 
-widget = NWBFileVideoPlayer(
-    nwbfile_raw=nwbfile_raw,
-    dandi_asset=dandi_asset,
-    grid_layout=[
-        ["VideoLeftCamera", "VideoRightCamera"],
-        ["VideoBodyCamera"],
-    ],
+client = DandiAPIClient()
+dandiset = client.get_dandiset("000409", "draft")
+asset = dandiset.get_asset_by_path("sub-NYU-39/sub-NYU-39_ses-..._behavior.nwb")
+
+widget = NWBDANDIVideoPlayer(asset=asset)
+widget
+```
+
+### Local Files
+
+Use `NWBLocalVideoPlayer` for local NWB files:
+
+```python
+from pynwb import read_nwb
+from nwb_video_widgets import NWBLocalVideoPlayer
+
+nwbfile = read_nwb("experiment.nwb")
+widget = NWBLocalVideoPlayer(nwbfile)
+widget
+```
+
+---
+
+## Pose Estimation Widgets
+
+Overlays DeepLabCut keypoints on streaming video with support for camera selection.
+
+![Pose Estimation Widget Demo](assets/pose_estimation_preprocessed.gif)
+
+**Features:**
+
+- Camera selection via settings panel
+- Keypoint visibility toggles (All/None/individual)
+- Label display toggle
+- Session time display (NWB timestamps)
+- Custom keypoint colors via colormap or explicit hex values
+- Supports split files (videos in raw file, pose in processed file)
+
+### DANDI Streaming
+
+Use `NWBDANDIPoseEstimationWidget` for DANDI-hosted files:
+
+```python
+from dandi.dandiapi import DandiAPIClient
+from nwb_video_widgets import NWBDANDIPoseEstimationWidget
+
+client = DandiAPIClient()
+dandiset = client.get_dandiset("000409", "draft")
+
+# Single file (videos + pose in same file)
+asset = dandiset.get_asset_by_path("sub-.../sub-..._combined.nwb")
+widget = NWBDANDIPoseEstimationWidget(asset=asset)
+
+# Or split files (videos in raw, pose in processed)
+raw_asset = dandiset.get_asset_by_path("sub-.../sub-..._desc-raw.nwb")
+processed_asset = dandiset.get_asset_by_path("sub-.../sub-..._desc-processed.nwb")
+widget = NWBDANDIPoseEstimationWidget(
+    asset=processed_asset,
+    video_asset=raw_asset,
+)
+widget
+```
+
+### Local Files
+
+Use `NWBLocalPoseEstimationWidget` for local NWB files:
+
+```python
+from pynwb import read_nwb
+from nwb_video_widgets import NWBLocalPoseEstimationWidget
+
+# Single file
+nwbfile = read_nwb("experiment.nwb")
+widget = NWBLocalPoseEstimationWidget(nwbfile)
+widget
+
+# Or split files
+nwbfile_raw = read_nwb("raw.nwb")
+nwbfile_processed = read_nwb("processed.nwb")
+widget = NWBLocalPoseEstimationWidget(
+    nwbfile=nwbfile_processed,
+    video_nwbfile=nwbfile_raw,
 )
 widget
 ```
@@ -105,25 +134,6 @@ widget
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `nwbfile_raw` | `NWBFile` | NWB file containing video references |
-| `dandi_asset` | `DandiAsset` | DANDI asset for S3 URL resolution |
-| `grid_layout` | `list[list[str]]` | 2D layout of video keys |
+| `keypoint_colors` | `str` or `dict` | Matplotlib colormap name (e.g., `'tab10'`) or dict mapping keypoint names to hex colors |
+| `default_camera` | `str` | Camera to display initially |
 
-## Development
-
-```bash
-git clone https://github.com/catalystneuro/nwb-video-widgets.git
-cd nwb-video-widgets
-uv pip install -e ".[dandi]"
-uv sync --group dev
-```
-
-Run tests:
-
-```bash
-pytest
-```
-
-## License
-
-MIT

@@ -28,6 +28,8 @@ dependencies = [
     "pynwb",
     "numpy",
     "matplotlib",
+    "dandi>=0.74.1",
+    "remfile>=0.1.13",
 ]
 
 [project.optional-dependencies]
@@ -45,8 +47,6 @@ dev = [
     "ruff",
     "jupyterlab",
     "ipykernel>=7.1.0",
-    "remfile>=0.1.13",
-    "dandi>=0.74.1",
     "opencv-python-headless",
 ]
 
