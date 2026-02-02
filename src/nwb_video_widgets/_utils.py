@@ -302,8 +302,7 @@ def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:
     for camera_name, pose_estimation in cameras.items():
         # Get keypoint names (remove PoseEstimationSeries suffix)
         keypoint_names = [
-            name.replace("PoseEstimationSeries", "")
-            for name in pose_estimation.pose_estimation_series.keys()
+            name.replace("PoseEstimationSeries", "") for name in pose_estimation.pose_estimation_series.keys()
         ]
 
         # Get timestamps from the first pose estimation series

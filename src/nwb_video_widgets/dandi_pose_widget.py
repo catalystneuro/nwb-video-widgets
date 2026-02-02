@@ -294,16 +294,12 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
             video_asset = dandiset.get_asset_by_path(full_path)
             if video_asset is not None:
-                video_urls[name] = video_asset.get_content_url(
-                    follow_redirects=1, strip_query=True
-                )
+                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
 
         return video_urls
 
     @staticmethod
-    def _load_camera_pose_data(
-        pose_estimation, camera_name: str, cmap, custom_colors: dict
-    ) -> dict:
+    def _load_camera_pose_data(pose_estimation, camera_name: str, cmap, custom_colors: dict) -> dict:
         """Load pose data for a single camera.
 
         Returns a dict with:
@@ -320,9 +316,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         coordinates = {}
         timestamps = None
 
-        for index, (series_name, series) in enumerate(
-            camera_pose.pose_estimation_series.items()
-        ):
+        for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
             # Get coordinates - iterate to build list without memory duplication

@@ -100,10 +100,7 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
         if video_grid is not None and len(video_grid) > 0:
             # Fixed grid mode - bypass settings panel
             # Filter to only include videos that exist in video_urls
-            filtered_grid = [
-                [v for v in row if v in video_urls]
-                for row in video_grid
-            ]
+            filtered_grid = [[v for v in row if v in video_urls] for row in video_grid]
             # Remove empty rows
             filtered_grid = [row for row in filtered_grid if row]
             # Flatten grid to get selected videos (preserving order)
@@ -157,8 +154,7 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
         """
         if nwbfile.read_io is None or not hasattr(nwbfile.read_io, "source"):
             raise ValueError(
-                "NWB file must be loaded from disk to resolve video paths. "
-                "The nwbfile.read_io attribute is None."
+                "NWB file must be loaded from disk to resolve video paths. The nwbfile.read_io attribute is None."
             )
 
         nwbfile_path = Path(nwbfile.read_io.source)

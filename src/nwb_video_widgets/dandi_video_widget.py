@@ -10,7 +10,11 @@ import anywidget
 import traitlets
 from pynwb import NWBFile
 
-from nwb_video_widgets._utils import discover_video_series, get_video_info, get_video_timestamps
+from nwb_video_widgets._utils import (
+    discover_video_series,
+    get_video_info,
+    get_video_timestamps,
+)
 
 if TYPE_CHECKING:
     from dandi.dandiapi import RemoteAsset
@@ -109,10 +113,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
         if video_grid is not None and len(video_grid) > 0:
             # Fixed grid mode - bypass settings panel
             # Filter to only include videos that exist in video_urls
-            filtered_grid = [
-                [v for v in row if v in video_urls]
-                for row in video_grid
-            ]
+            filtered_grid = [[v for v in row if v in video_urls] for row in video_grid]
             # Remove empty rows
             filtered_grid = [row for row in filtered_grid if row]
             # Flatten grid to get selected videos (preserving order)
@@ -206,8 +207,6 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
 
             video_asset = dandiset.get_asset_by_path(full_path)
             if video_asset is not None:
-                video_urls[name] = video_asset.get_content_url(
-                    follow_redirects=1, strip_query=True
-                )
+                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
 
         return video_urls
