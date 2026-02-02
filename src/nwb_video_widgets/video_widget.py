@@ -108,14 +108,15 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
         ...     nwbfile_raw, dandi_asset
         ... )
         """
-        from pathlib import Path
+        from pathlib import PurePosixPath
 
         from pynwb.image import ImageSeries
 
         # Derive dandiset from dandi_asset
         dandiset = dandi_asset.client.get_dandiset(dandi_asset.dandiset_id)
 
-        nwb_parent = Path(dandi_asset.path).parent
+        # Use PurePosixPath because DANDI paths always use forward slashes
+        nwb_parent = PurePosixPath(dandi_asset.path).parent
         video_urls = {}
 
         for name, obj in nwbfile_raw.acquisition.items():
