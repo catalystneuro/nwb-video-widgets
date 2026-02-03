@@ -9,6 +9,7 @@
 ## Improvements
 
 * Updated CI infrastructure: added pre-commit, ruff formatting (line-length 120), reusable workflows, changelog detection, and file change assessment. [PR #3](https://github.com/catalystneuro/nwb-video-widgets/pull/3)
+* Add support for python 3.14 in CI. [PR #6](https://github.com/catalystneuro/nwb-video-widgets/pull/6)
 
 # v0.1.3 (2025-02-2)
 
