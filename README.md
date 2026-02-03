@@ -25,6 +25,12 @@ For DANDI integration and streaming support:
 pip install nwb-video-widgets[dandi]
 ```
 
+## Testing
+
+To test the widgets with DANDI streaming, run the example notebook in an environment where `nwb-video-widgets[dandi]` is installed:
+
+[notebooks/example_notebook.ipynb](notebooks/example_notebook.ipynb)
+
 ## Video Player Widgets
 
 Multi-camera synchronized video player with configurable layout (Row, Column, or Grid).
@@ -202,4 +208,3 @@ widget
 |-----------|------|-------------|
 | `keypoint_colors` | `str` or `dict` | Matplotlib colormap name (e.g., `'tab10'`) or dict mapping keypoint names to hex colors |
 | `default_camera` | `str` | Camera to display initially |
-
