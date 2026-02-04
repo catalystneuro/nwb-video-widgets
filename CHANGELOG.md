@@ -1,4 +1,4 @@
-# v0.1.5 (Upcoming)
+# v0.1.6 (Upcoming)
 
 ## Removals, Deprecations and changes
 
@@ -8,7 +8,7 @@
 
 ## Improvmeents
 
-# v0.1.4 (2026-02-03)
+# v0.1.5 (2026-02-03)
 
 ## Removals, Deprecations and Changes
 
