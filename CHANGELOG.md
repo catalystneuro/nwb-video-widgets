@@ -1,4 +1,4 @@
-# v0.1.4 (Upcoming)
+# v0.1.4 (2026-02-03)
 
 ## Removals, Deprecations and Changes
 
@@ -13,7 +13,7 @@
 
 * Updated CI infrastructure: added pre-commit, ruff formatting (line-length 120), reusable workflows, changelog detection, and file change assessment. [PR #3](https://github.com/catalystneuro/nwb-video-widgets/pull/3)
 
-# v0.1.3 (2025-02-2)
+# v0.1.3 (2026-02-02)
 
 ## Removals, Deprecations and Changes
 
