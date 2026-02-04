@@ -6,7 +6,7 @@
 
 ## Features
 
-## Improvmeents
+## Improvements
 
 # v0.1.5 (2026-02-03)
 
