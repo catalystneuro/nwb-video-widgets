@@ -722,12 +722,20 @@ function render({ model, el }) {
     updateLoadingState();
     createKeypointToggles();
     updateSectionVisibility();
+
+    // Update seek bar max when camera data loads
+    const data = getCurrentCameraData();
+    if (data?.timestamps?.length) {
+      seekBar.max = data.timestamps.length - 1;
+    }
+
     drawPose();
   });
 
   model.on("change:visible_keypoints", () => {
     visibleKeypoints = { ...model.get("visible_keypoints") };
     updateToggleStyles();
+    drawPose();
   });
 
   model.on("change:loading", updateLoadingState);

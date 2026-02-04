@@ -4,6 +4,9 @@
 
 ## Bug Fixes
 
+* Fixed pose widget seek bar not spanning full video duration. The seek bar max value was not updated when camera data loaded asynchronously, limiting seeking to only the first 100 frames instead of all frames. [PR #8](https://github.com/catalystneuro/nwb-video-widgets/pull/8)
+* Fixed keypoint visibility toggles not updating the pose overlay display. [PR #8](https://github.com/catalystneuro/nwb-video-widgets/pull/8)
+
 ## Features
 
 ## Improvements
