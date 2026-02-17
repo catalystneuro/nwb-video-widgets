@@ -29,7 +29,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     Overlays DeepLabCut keypoints on streaming video with support for
     camera selection via a settings panel.
 
-    This widget discovers PoseEstimation containers in processing['pose_estimation']
+    This widget discovers PoseEstimation containers anywhere in the NWB file
     and resolves video paths to S3 URLs via the DANDI API. An interactive
     settings panel allows users to select which camera to display.
 
@@ -156,13 +156,10 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
             colormap_name = "tab10"
             custom_colors = keypoint_colors
 
-        # Get pose estimation container
-        if "pose_estimation" not in nwbfile.processing:
-            raise ValueError("NWB file does not contain pose_estimation processing module")
-        pose_estimation = nwbfile.processing["pose_estimation"]
-
-        # Get all PoseEstimation containers (excludes Skeletons and other metadata)
+        # Get all PoseEstimation containers (location-agnostic)
         pose_containers = discover_pose_estimation_cameras(nwbfile)
+        if not pose_containers:
+            raise ValueError("NWB file does not contain any PoseEstimation objects")
         available_cameras = list(pose_containers.keys())
 
         # Get camera info for settings panel display
@@ -185,7 +182,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
             selected_camera = ""
 
         # Store references for lazy loading (not synced to JS)
-        self._pose_estimation = pose_estimation
+        self._pose_containers = pose_containers
         self._cmap = plt.get_cmap(colormap_name)
         self._custom_colors = custom_colors
 
@@ -216,7 +213,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         try:
             # Load pose data for this camera
             camera_data = self._load_camera_pose_data(
-                self._pose_estimation, camera_name, self._cmap, self._custom_colors
+                self._pose_containers, camera_name, self._cmap, self._custom_colors
             )
 
             # Update all_camera_data (must create new dict for traitlets to detect change)
@@ -299,7 +296,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         return video_urls
 
     @staticmethod
-    def _load_camera_pose_data(pose_estimation, camera_name: str, cmap, custom_colors: dict) -> dict:
+    def _load_camera_pose_data(pose_containers: dict, camera_name: str, cmap, custom_colors: dict) -> dict:
         """Load pose data for a single camera.
 
         Returns a dict with:
@@ -307,7 +304,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         - pose_coordinates: {name: [[x, y], ...]} as JSON-serializable lists
         - timestamps: [t0, t1, ...] as JSON-serializable list
         """
-        camera_pose = pose_estimation[camera_name]
+        camera_pose = pose_containers[camera_name]
 
         keypoint_names = list(camera_pose.pose_estimation_series.keys())
         n_kp = len(keypoint_names)

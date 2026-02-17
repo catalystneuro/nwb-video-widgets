@@ -25,7 +25,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     Overlays DeepLabCut keypoints on streaming video with support for
     camera selection via a settings panel.
 
-    This widget discovers PoseEstimation containers in processing['pose_estimation']
+    This widget discovers PoseEstimation containers anywhere in the NWB file
     and resolves video paths relative to the NWB file location. An interactive
     settings panel allows users to select which camera to display.
 
@@ -36,8 +36,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     Parameters
     ----------
     nwbfile : pynwb.NWBFile
-        NWB file containing pose estimation in processing['pose_estimation'].
-        Must have been loaded from disk.
+        NWB file containing pose estimation. Must have been loaded from disk.
     video_nwbfile : pynwb.NWBFile, optional
         NWB file containing video ImageSeries in acquisition. If not provided,
         videos are assumed to be in `nwbfile`. Use this when videos are in a
@@ -124,13 +123,10 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             colormap_name = "tab10"
             custom_colors = keypoint_colors
 
-        # Get pose estimation container
-        if "pose_estimation" not in nwbfile.processing:
-            raise ValueError("NWB file does not contain pose_estimation processing module")
-        pose_estimation = nwbfile.processing["pose_estimation"]
-
-        # Get all PoseEstimation containers (excludes Skeletons and other metadata)
+        # Get all PoseEstimation containers (location-agnostic)
         pose_containers = discover_pose_estimation_cameras(nwbfile)
+        if not pose_containers:
+            raise ValueError("NWB file does not contain any PoseEstimation objects")
         available_cameras = list(pose_containers.keys())
 
         # Get camera info for settings panel display
@@ -153,7 +149,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             selected_camera = ""
 
         # Store references for lazy loading (not synced to JS)
-        self._pose_estimation = pose_estimation
+        self._pose_containers = pose_containers
         self._cmap = plt.get_cmap(colormap_name)
         self._custom_colors = custom_colors
 
@@ -184,7 +180,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         try:
             # Load pose data for this camera
             camera_data = self._load_camera_pose_data(
-                self._pose_estimation, camera_name, self._cmap, self._custom_colors
+                self._pose_containers, camera_name, self._cmap, self._custom_colors
             )
 
             # Update all_camera_data (must create new dict for traitlets to detect change)
@@ -277,7 +273,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         return video_urls
 
     @staticmethod
-    def _load_camera_pose_data(pose_estimation, camera_name: str, cmap, custom_colors: dict) -> dict:
+    def _load_camera_pose_data(pose_containers: dict, camera_name: str, cmap, custom_colors: dict) -> dict:
         """Load pose data for a single camera.
 
         Returns a dict with:
@@ -285,7 +281,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         - pose_coordinates: {name: [[x, y], ...]} as JSON-serializable lists
         - timestamps: [t0, t1, ...] as JSON-serializable list
         """
-        camera_pose = pose_estimation[camera_name]
+        camera_pose = pose_containers[camera_name]
 
         keypoint_names = list(camera_pose.pose_estimation_series.keys())
         n_kp = len(keypoint_names)
