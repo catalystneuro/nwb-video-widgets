@@ -161,7 +161,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
         import remfile
         from pynwb import NWBHDF5IO
 
-        s3_url = asset.get_content_url(follow_redirects=1, strip_query=True)
+        s3_url = asset.get_content_url(follow_redirects=1, strip_query=False)
 
         remote_file = remfile.File(s3_url)
         h5_file = h5py.File(remote_file, "r")
@@ -194,6 +194,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
         from dandi.dandiapi import DandiAPIClient
 
         client = DandiAPIClient()
+        client.dandi_authenticate()
         dandiset = client.get_dandiset(asset.dandiset_id, asset.version_id)
 
         # Use PurePosixPath because DANDI paths always use forward slashes
