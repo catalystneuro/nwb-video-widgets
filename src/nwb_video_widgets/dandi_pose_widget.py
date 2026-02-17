@@ -20,7 +20,7 @@ from nwb_video_widgets._utils import (
 )
 
 if TYPE_CHECKING:
-    from dandi.dandiapi import RemoteAsset
+    from dandi.dandiapi import DandiAPIClient, RemoteAsset
 
 
 class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
@@ -39,6 +39,8 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
     Parameters
     ----------
+    client : DandiAPIClient
+        Authenticated DANDI API client.
     asset : RemoteAsset
         DANDI asset object for the processed NWB file containing pose estimation.
         The dandiset_id and asset path are extracted from this object.
@@ -67,7 +69,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     >>> client = DandiAPIClient()
     >>> dandiset = client.get_dandiset("000409", "draft")
     >>> asset = dandiset.get_asset_by_path("sub-.../sub-..._combined.nwb")
-    >>> widget = NWBDANDIPoseEstimationWidget(asset=asset)
+    >>> widget = NWBDANDIPoseEstimationWidget(client=client, asset=asset)
     >>> display(widget)
 
     Split files (videos in raw, pose in processed):
@@ -75,6 +77,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     >>> raw_asset = dandiset.get_asset_by_path("sub-.../sub-..._desc-raw.nwb")
     >>> processed_asset = dandiset.get_asset_by_path("sub-.../sub-..._desc-processed.nwb")
     >>> widget = NWBDANDIPoseEstimationWidget(
+    ...     client=client,
     ...     asset=processed_asset,
     ...     video_asset=raw_asset,
     ... )
@@ -83,6 +86,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     With pre-loaded NWB files (avoids re-loading):
 
     >>> widget = NWBDANDIPoseEstimationWidget(
+    ...     client=client,
     ...     asset=processed_asset,
     ...     nwbfile=nwbfile_processed,
     ...     video_asset=raw_asset,
@@ -121,6 +125,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
     def __init__(
         self,
+        client: DandiAPIClient,
         asset: RemoteAsset,
         nwbfile: Optional[NWBFile] = None,
         video_asset: Optional[RemoteAsset] = None,
@@ -146,7 +151,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         video_source_asset = video_asset if video_asset is not None else asset
 
         # Compute video URLs from DANDI
-        video_urls = self._get_video_urls_from_dandi(video_source_nwbfile, video_source_asset)
+        video_urls = self._get_video_urls_from_dandi(video_source_nwbfile, video_source_asset, client)
 
         # Parse keypoint_colors
         if isinstance(keypoint_colors, str):
@@ -276,12 +281,9 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     def _get_video_urls_from_dandi(
         nwbfile: NWBFile,
         asset: RemoteAsset,
+        client: DandiAPIClient,
     ) -> dict[str, str]:
         """Extract video S3 URLs from NWB file using DANDI API."""
-        from dandi.dandiapi import DandiAPIClient
-
-        client = DandiAPIClient()
-        client.dandi_authenticate()
         dandiset = client.get_dandiset(asset.dandiset_id, asset.version_id)
 
         # Use PurePosixPath because DANDI paths always use forward slashes

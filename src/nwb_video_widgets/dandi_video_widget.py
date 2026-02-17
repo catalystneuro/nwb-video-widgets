@@ -17,7 +17,7 @@ from nwb_video_widgets._utils import (
 )
 
 if TYPE_CHECKING:
-    from dandi.dandiapi import RemoteAsset
+    from dandi.dandiapi import DandiAPIClient, RemoteAsset
 
 
 class NWBDANDIVideoPlayer(anywidget.AnyWidget):
@@ -30,6 +30,8 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
 
     Parameters
     ----------
+    client : DandiAPIClient
+        Authenticated DANDI API client.
     asset : RemoteAsset
         DANDI asset object (from dandiset.get_asset_by_path() or similar).
         The dandiset_id and asset path are extracted from this object.
@@ -53,12 +55,13 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     >>> client = DandiAPIClient()
     >>> dandiset = client.get_dandiset("000409", "draft")
     >>> asset = dandiset.get_asset_by_path("sub-NYU-39/sub-NYU-39_ses-...nwb")
-    >>> widget = NWBDANDIVideoPlayer(asset=asset)
+    >>> widget = NWBDANDIVideoPlayer(client=client, asset=asset)
     >>> display(widget)
 
     With pre-loaded NWB file (avoids re-loading):
 
     >>> widget = NWBDANDIVideoPlayer(
+    ...     client=client,
     ...     asset=asset,
     ...     nwbfile=already_loaded_nwbfile,
     ... )
@@ -66,6 +69,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     Fixed grid mode (single row):
 
     >>> widget = NWBDANDIVideoPlayer(
+    ...     client=client,
     ...     asset=asset,
     ...     video_grid=[["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]]
     ... )
@@ -73,6 +77,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     Fixed grid mode (2x2 grid):
 
     >>> widget = NWBDANDIVideoPlayer(
+    ...     client=client,
     ...     asset=asset,
     ...     video_grid=[
     ...         ["VideoLeftCamera", "VideoRightCamera"],
@@ -95,6 +100,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
 
     def __init__(
         self,
+        client: DandiAPIClient,
         asset: RemoteAsset,
         nwbfile: Optional[NWBFile] = None,
         video_grid: Optional[list[list[str]]] = None,
@@ -105,7 +111,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
         if nwbfile is None:
             nwbfile = self._load_nwbfile_from_dandi(asset)
 
-        video_urls = self.get_video_urls_from_dandi(nwbfile, asset)
+        video_urls = self.get_video_urls_from_dandi(nwbfile, asset, client)
         video_timestamps = get_video_timestamps(nwbfile)
         available_videos = get_video_info(nwbfile)
         video_labels = video_labels or {}
@@ -172,6 +178,7 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     def get_video_urls_from_dandi(
         nwbfile: NWBFile,
         asset: RemoteAsset,
+        client: DandiAPIClient,
     ) -> dict[str, str]:
         """Extract video S3 URLs from NWB file using DANDI API.
 
@@ -185,16 +192,14 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
             NWB file containing video ImageSeries in acquisition
         asset : RemoteAsset
             DANDI asset object for the NWB file
+        client : DandiAPIClient
+            Authenticated DANDI API client
 
         Returns
         -------
         dict[str, str]
             Mapping of video names to S3 URLs
         """
-        from dandi.dandiapi import DandiAPIClient
-
-        client = DandiAPIClient()
-        client.dandi_authenticate()
         dandiset = client.get_dandiset(asset.dandiset_id, asset.version_id)
 
         # Use PurePosixPath because DANDI paths always use forward slashes

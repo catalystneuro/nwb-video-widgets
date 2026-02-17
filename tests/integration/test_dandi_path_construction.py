@@ -28,6 +28,7 @@ def test_dandi_video_path_construction():
     # This would fail on Windows before the fix with:
     # NotFoundError: No asset at path 'sub-NYU-46\\sub-NYU-46_ses-...\\video.mp4'
     widget = NWBDANDIPoseEstimationWidget(
+        client=client,
         asset=processed_asset,
         video_asset=raw_asset,
     )
