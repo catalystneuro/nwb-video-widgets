@@ -227,10 +227,9 @@ class TestErrorHandling:
 
     def test_raises_for_in_memory_nwbfile(self):
         """Test that error is raised for NWB files not loaded from disk."""
+        from ndx_pose import PoseEstimation, PoseEstimationSeries
         from pynwb import ProcessingModule
         from pynwb.testing.mock.file import mock_NWBFile
-
-        from ndx_pose import PoseEstimation, PoseEstimationSeries
 
         nwbfile = mock_NWBFile()
 
