@@ -56,7 +56,7 @@ client = DandiAPIClient()
 dandiset = client.get_dandiset("000409", "draft")
 asset = dandiset.get_asset_by_path("sub-NYU-39/sub-NYU-39_ses-..._behavior.nwb")
 
-widget = NWBDANDIVideoPlayer(asset=asset)
+widget = NWBDANDIVideoPlayer(client=client, asset=asset)
 widget
 ```
 
@@ -113,6 +113,7 @@ The same parameter works with `NWBDANDIVideoPlayer`:
 
 ```python
 widget = NWBDANDIVideoPlayer(
+    client=client,
     asset=asset,
     video_grid=[["VideoLeftCamera", "VideoRightCamera"]]
 )
@@ -167,12 +168,13 @@ dandiset = client.get_dandiset("000409", "draft")
 
 # Single file (videos + pose in same file)
 asset = dandiset.get_asset_by_path("sub-.../sub-..._combined.nwb")
-widget = NWBDANDIPoseEstimationWidget(asset=asset)
+widget = NWBDANDIPoseEstimationWidget(client=client, asset=asset)
 
 # Or split files (videos in raw, pose in processed)
 raw_asset = dandiset.get_asset_by_path("sub-.../sub-..._desc-raw.nwb")
 processed_asset = dandiset.get_asset_by_path("sub-.../sub-..._desc-processed.nwb")
 widget = NWBDANDIPoseEstimationWidget(
+    client=client,
     asset=processed_asset,
     video_asset=raw_asset,
 )
