@@ -6,6 +6,8 @@
 
 ## Features
 
+* Added support for embargoed Dandisets. [PR #12](https://github.com/catalystneuro/nwb-video-widgets/pull/12)
+
 ## Improvements
 
 # v0.1.5 (2026-02-03)
