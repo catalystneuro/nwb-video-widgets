@@ -1,5 +1,6 @@
 """Synthetic video generation for testing."""
 
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,10 @@ def create_synthetic_video(
     height: int = 120,
     fps: float = 30.0,
 ) -> Path:
-    """Create a synthetic video file using OpenCV.
+    """Create a synthetic H.264-encoded video file for testing.
+
+    Writes frames using mp4v, then re-encodes to H.264 via ffmpeg.
+    ffmpeg is pre-installed on GitHub Actions (Ubuntu and Windows runners).
 
     Parameters
     ----------
@@ -32,8 +36,11 @@ def create_synthetic_video(
     """
     import cv2
 
+    output_path = Path(output_path)
+    tmp_path = output_path.with_suffix(".tmp.mp4")
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+    out = cv2.VideoWriter(str(tmp_path), fourcc, fps, (width, height))
 
     for frame_index in range(num_frames):
         # Create gradient background with frame number indicator
@@ -50,4 +57,23 @@ def create_synthetic_video(
         out.write(frame)
 
     out.release()
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(tmp_path),
+            "-vcodec",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    tmp_path.unlink()
+
     return output_path
