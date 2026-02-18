@@ -58,6 +58,8 @@ def create_nwbfile_with_pose_estimation(
     keypoint_names: list[str],
     num_frames: int = 30,
     timestamps: np.ndarray | None = None,
+    video_width: int = 160,
+    video_height: int = 120,
 ) -> NWBFile:
     """Create an NWBFile with PoseEstimation data.
 
@@ -71,6 +73,10 @@ def create_nwbfile_with_pose_estimation(
         Number of frames of pose data, by default 30
     timestamps : np.ndarray, optional
         Timestamps for the pose data. If None, uses evenly spaced from 0 to 1.
+    video_width : int, optional
+        Width of the source video in pixels, by default 160
+    video_height : int, optional
+        Height of the source video in pixels, by default 120
 
     Returns
     -------
@@ -91,23 +97,25 @@ def create_nwbfile_with_pose_estimation(
         timestamps = np.linspace(0.0, 1.0, num_frames)
 
     # Create a PoseEstimation container for each camera
+    noise_scale = int(video_width * 0.03)
     for camera_name in camera_names:
         # Create PoseEstimationSeries for each keypoint
         pose_series_list = []
-        for keypoint_name in keypoint_names:
-            # Generate synthetic pose data (x, y coordinates)
-            # Add some variation to make it more realistic
-            base_x = 100 + keypoint_names.index(keypoint_name) * 50
-            base_y = 200 + keypoint_names.index(keypoint_name) * 30
-            x_coords = base_x + np.random.randn(num_frames) * 5
-            y_coords = base_y + np.random.randn(num_frames) * 5
+        for idx, keypoint_name in enumerate(keypoint_names):
+            # Generate synthetic pose data (x, y coordinates) within video bounds
+            base_x = int(video_width * 0.2) + idx * int(video_width * 0.1)
+            base_y = int(video_height * 0.2) + idx * int(video_height * 0.1)
+            x_coords = base_x + np.random.randn(num_frames) * noise_scale
+            y_coords = base_y + np.random.randn(num_frames) * noise_scale
             data = np.column_stack([x_coords, y_coords])
 
             series = PoseEstimationSeries(
                 name=f"{keypoint_name}PoseEstimationSeries",
                 data=data,
+                unit="pixels",
                 reference_frame="top-left corner",
                 timestamps=timestamps,
+                confidence=np.random.rand(num_frames),
             )
             pose_series_list.append(series)
 
@@ -116,6 +124,7 @@ def create_nwbfile_with_pose_estimation(
             name=camera_name,
             pose_estimation_series=pose_series_list,
             description=f"Pose estimation for {camera_name}",
+            dimensions=np.array([[video_width, video_height]], dtype="uint16"),
         )
         pose_module.add(pose_estimation)
 
@@ -128,6 +137,8 @@ def create_nwbfile_with_videos_and_pose(
     keypoint_names: list[str],
     num_frames: int = 30,
     timestamps: dict[str, np.ndarray] | None = None,
+    video_width: int = 160,
+    video_height: int = 120,
 ) -> NWBFile:
     """Create an NWBFile with both external videos and pose estimation.
 
@@ -143,6 +154,10 @@ def create_nwbfile_with_videos_and_pose(
         Number of frames of pose data, by default 30
     timestamps : dict[str, np.ndarray], optional
         Mapping of video names to timestamp arrays. If None, uses rate-based.
+    video_width : int, optional
+        Width of the source video in pixels, by default 160
+    video_height : int, optional
+        Height of the source video in pixels, by default 120
 
     Returns
     -------
@@ -189,20 +204,23 @@ def create_nwbfile_with_videos_and_pose(
         pose_timestamps = np.linspace(0.0, 1.0, num_frames)
 
     # Create pose estimation for each camera
+    noise_scale = int(video_width * 0.03)
     for camera_name in camera_names:
         pose_series_list = []
-        for keypoint_name in keypoint_names:
-            base_x = 100 + keypoint_names.index(keypoint_name) * 50
-            base_y = 200 + keypoint_names.index(keypoint_name) * 30
-            x_coords = base_x + np.random.randn(len(pose_timestamps)) * 5
-            y_coords = base_y + np.random.randn(len(pose_timestamps)) * 5
+        for idx, keypoint_name in enumerate(keypoint_names):
+            base_x = int(video_width * 0.2) + idx * int(video_width * 0.1)
+            base_y = int(video_height * 0.2) + idx * int(video_height * 0.1)
+            x_coords = base_x + np.random.randn(len(pose_timestamps)) * noise_scale
+            y_coords = base_y + np.random.randn(len(pose_timestamps)) * noise_scale
             data = np.column_stack([x_coords, y_coords])
 
             series = PoseEstimationSeries(
                 name=f"{keypoint_name}PoseEstimationSeries",
                 data=data,
+                unit="pixels",
                 reference_frame="top-left corner",
                 timestamps=pose_timestamps,
+                confidence=np.random.rand(len(pose_timestamps)),
             )
             pose_series_list.append(series)
 
@@ -210,6 +228,7 @@ def create_nwbfile_with_videos_and_pose(
             name=camera_name,
             pose_estimation_series=pose_series_list,
             description=f"Pose estimation for {camera_name}",
+            dimensions=np.array([[video_width, video_height]], dtype="uint16"),
         )
         pose_module.add(pose_estimation)
 
