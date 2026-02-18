@@ -36,6 +36,32 @@ def get_video_codec(video_path: Path) -> str:
         return container.streams.video[0].codec_context.name
 
 
+def _transcode_to_h264(source: str | Path, out_path: Path) -> None:
+    """Transcode a video to H.264/MP4 using PyAV.
+
+    Parameters
+    ----------
+    source : str or Path
+        Path or URL of the input video
+    out_path : Path
+        Destination path for the H.264-encoded output
+    """
+    with av.open(str(source)) as inp:
+        with av.open(str(out_path), "w", format="mp4") as out:
+            in_stream = inp.streams.video[0]
+            out_stream = out.add_stream("libx264", rate=in_stream.average_rate)
+            out_stream.width = in_stream.width
+            out_stream.height = in_stream.height
+            out_stream.pix_fmt = "yuv420p"
+            for packet in inp.demux(in_stream):
+                for frame in packet.decode():
+                    frame.pts = None
+                    for out_packet in out_stream.encode(frame):
+                        out.mux(out_packet)
+            for out_packet in out_stream.encode():
+                out.mux(out_packet)
+
+
 def ensure_browser_compatible_video(video_path: Path) -> Path:
     """Return a path to a browser-compatible version of a video file.
 
@@ -64,23 +90,8 @@ def ensure_browser_compatible_video(video_path: Path) -> Path:
     cache_dir.mkdir(exist_ok=True)
     out_path = cache_dir / f"{video_path.stem}_{hash_val}_h264.mp4"
 
-    if out_path.exists():
-        return out_path
-
-    with av.open(str(video_path)) as inp:
-        with av.open(str(out_path), "w", format="mp4") as out:
-            in_stream = inp.streams.video[0]
-            out_stream = out.add_stream("libx264", rate=in_stream.average_rate)
-            out_stream.width = in_stream.width
-            out_stream.height = in_stream.height
-            out_stream.pix_fmt = "yuv420p"
-            for packet in inp.demux(in_stream):
-                for frame in packet.decode():
-                    frame.pts = None
-                    for out_packet in out_stream.encode(frame):
-                        out.mux(out_packet)
-            for out_packet in out_stream.encode():
-                out.mux(out_packet)
+    if not out_path.exists():
+        _transcode_to_h264(video_path, out_path)
 
     return out_path
 
