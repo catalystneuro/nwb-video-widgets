@@ -8,6 +8,8 @@
 
 ## Features
 
+* Added local_example_notebook.ipynb and appropriate mock nwb file functions to demonstrate usage of the widgets in a local Jupyter environment without requiring DANDI access. [PR #21](https://github.com/catalystneuro/nwb-video-widgets/pull/21)
+
 ## Improvements
 
 # v0.1.5 (2026-02-03)
