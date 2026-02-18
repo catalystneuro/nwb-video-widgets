@@ -11,7 +11,7 @@ def create_synthetic_video(
     width: int = 160,
     height: int = 120,
     fps: float = 30.0,
-    codec: str = "mp4v",
+    codec: str = "avc1",
 ) -> Path:
     """Create a synthetic video file using OpenCV.
 
