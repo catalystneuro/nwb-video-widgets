@@ -47,17 +47,17 @@ def _transcode_to_h264(source: str | Path, out_path: Path) -> None:
         Destination path for the H.264-encoded output
     """
     with av.open(str(source)) as inp:
-        with av.open(str(out_path), "w", format="mp4") as out:
+        with av.open(str(out_path), "w", format="mp4", options={"movflags": "+faststart"}) as out:
             in_stream = inp.streams.video[0]
-            out_stream = out.add_stream("libx264", rate=in_stream.average_rate)
+            rate = in_stream.average_rate or 30
+            out_stream = out.add_stream("libx264", rate=rate)
             out_stream.width = in_stream.width
             out_stream.height = in_stream.height
             out_stream.pix_fmt = "yuv420p"
-            for packet in inp.demux(in_stream):
-                for frame in packet.decode():
-                    frame.pts = None
-                    for out_packet in out_stream.encode(frame):
-                        out.mux(out_packet)
+            for frame in inp.decode(in_stream):
+                frame = frame.reformat(format="yuv420p")
+                for out_packet in out_stream.encode(frame):
+                    out.mux(out_packet)
             for out_packet in out_stream.encode():
                 out.mux(out_packet)
 
