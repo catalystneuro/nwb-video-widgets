@@ -4,6 +4,8 @@
 
 ## Bug Fixes
 
+* Fixed embargoed dandiset support by using `asset.client` instead of creating a new unauthenticated `DandiAPIClient()`, and by preserving pre-signed S3 query parameters (`strip_query=False`). [PR #18](https://github.com/catalystneuro/nwb-video-widgets/pull/18)
+
 ## Features
 
 ## Improvements
