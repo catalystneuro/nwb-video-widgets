@@ -12,6 +12,7 @@ from pynwb import NWBFile
 
 from nwb_video_widgets._utils import (
     discover_video_series,
+    ensure_browser_compatible_video,
     get_video_info,
     get_video_timestamps,
     start_video_server,
@@ -162,11 +163,16 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
         video_series = discover_video_series(nwbfile)
         video_urls = {}
 
-        # Collect all video directories and start servers
-        video_dirs: set[Path] = set()
-        for series in video_series.values():
+        # Resolve and transcode videos that use non-browser-compatible codecs
+        resolved_video_paths: dict[str, Path] = {}
+        for name, series in video_series.items():
             relative_path = series.external_file[0].lstrip("./")
             video_path = (base_dir / relative_path).resolve()
+            resolved_video_paths[name] = ensure_browser_compatible_video(video_path)
+
+        # Collect all video directories and start servers
+        video_dirs: set[Path] = set()
+        for video_path in resolved_video_paths.values():
             video_dirs.add(video_path.parent)
 
         # Start servers for each unique directory
@@ -176,9 +182,7 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
             dir_to_port[video_dir] = port
 
         # Build URLs using the local HTTP server
-        for name, series in video_series.items():
-            relative_path = series.external_file[0].lstrip("./")
-            video_path = (base_dir / relative_path).resolve()
+        for name, video_path in resolved_video_paths.items():
             video_dir = video_path.parent
             port = dir_to_port[video_dir]
             video_urls[name] = f"http://127.0.0.1:{port}/{video_path.name}"

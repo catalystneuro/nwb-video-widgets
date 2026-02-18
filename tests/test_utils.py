@@ -5,7 +5,12 @@ import pytest
 from pynwb.image import ImageSeries
 from pynwb.testing.mock.file import mock_NWBFile
 
-from nwb_video_widgets._utils import discover_video_series, get_video_timestamps
+from nwb_video_widgets._utils import (
+    discover_video_series,
+    ensure_browser_compatible_video,
+    get_video_codec,
+    get_video_timestamps,
+)
 
 
 class TestDiscoverVideoSeries:
@@ -123,3 +128,41 @@ class TestGetVideoTimestamps:
 
         assert "VideoCamera" in result
         assert result["VideoCamera"] == [0.0]
+
+
+class TestGetVideoCodec:
+    """Tests for codec detection using PyAV."""
+
+    def test_returns_h264_for_h264_video(self, synthetic_video_path):
+        """Test that H.264-encoded video is detected correctly."""
+        codec = get_video_codec(synthetic_video_path)
+        assert codec == "h264"
+
+    def test_returns_mpeg4_for_mp4v_video(self, synthetic_video_mp4v_path):
+        """Test that mp4v-encoded video is detected as mpeg4."""
+        codec = get_video_codec(synthetic_video_mp4v_path)
+        assert codec == "mpeg4"
+
+
+class TestEnsureBrowserCompatibleVideo:
+    """Tests for automatic transcoding of non-browser-compatible videos."""
+
+    def test_returns_same_path_for_h264(self, synthetic_video_path):
+        """Test that an H.264 video is returned unchanged."""
+        result = ensure_browser_compatible_video(synthetic_video_path)
+        assert result == synthetic_video_path
+
+    def test_transcodes_mp4v_to_h264(self, synthetic_video_mp4v_path):
+        """Test that an mp4v video is transcoded and the output is H.264."""
+        result = ensure_browser_compatible_video(synthetic_video_mp4v_path)
+        assert result != synthetic_video_mp4v_path
+        assert result.exists()
+        assert get_video_codec(result) == "h264"
+
+    def test_uses_cache_on_second_call(self, synthetic_video_mp4v_path):
+        """Test that a second call returns the cached file without re-transcoding."""
+        result1 = ensure_browser_compatible_video(synthetic_video_mp4v_path)
+        mtime1 = result1.stat().st_mtime
+        result2 = ensure_browser_compatible_video(synthetic_video_mp4v_path)
+        assert result1 == result2
+        assert result2.stat().st_mtime == mtime1

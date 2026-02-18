@@ -7,7 +7,7 @@ import pytest
 from pynwb import NWBHDF5IO, read_nwb
 
 from tests.fixtures.synthetic_nwb import create_nwbfile_with_external_videos
-from tests.fixtures.synthetic_video import create_synthetic_video
+from tests.fixtures.synthetic_video import create_synthetic_video, create_synthetic_video_mp4v
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +36,14 @@ def synthetic_video_paths(session_tmp_path):
         paths[name] = video_path
 
     return paths
+
+
+@pytest.fixture(scope="session")
+def synthetic_video_mp4v_path(session_tmp_path):
+    """Create a single mp4v-encoded synthetic video file for the test session."""
+    video_path = session_tmp_path / "test_video_mp4v.mp4"
+    create_synthetic_video_mp4v(video_path, num_frames=30, width=160, height=120)
+    return video_path
 
 
 @pytest.fixture

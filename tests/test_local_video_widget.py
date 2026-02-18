@@ -1,5 +1,7 @@
 """Unit tests for NWBLocalVideoPlayer."""
 
+import shutil
+
 import pytest
 
 from nwb_video_widgets import NWBLocalVideoPlayer
@@ -89,3 +91,36 @@ class TestWidgetCreation:
         assert widget.layout_mode == "grid"
         assert widget.settings_open is True
         assert widget.selected_videos == []
+
+
+class TestMp4vCodecTranscoding:
+    """Tests for automatic transcoding of mp4v videos."""
+
+    @pytest.fixture
+    def nwbfile_with_mp4v_video(self, tmp_path, synthetic_video_mp4v_path):
+        """Create an NWB file pointing to an mp4v-encoded video."""
+        from pynwb import NWBHDF5IO, read_nwb
+
+        from tests.fixtures.synthetic_nwb import create_nwbfile_with_external_videos
+
+        video_copy = tmp_path / synthetic_video_mp4v_path.name
+        shutil.copy(synthetic_video_mp4v_path, video_copy)
+
+        nwbfile = create_nwbfile_with_external_videos({"VideoCamera": video_copy})
+        nwb_path = tmp_path / "test_mp4v.nwb"
+
+        with NWBHDF5IO(nwb_path, "w") as io:
+            io.write(nwbfile)
+
+        return read_nwb(nwb_path)
+
+    def test_mp4v_video_is_transcoded(self, nwbfile_with_mp4v_video):
+        """Test that mp4v videos are transparently transcoded to H.264 before serving."""
+
+        video_urls = NWBLocalVideoPlayer.get_video_urls_from_local(nwbfile_with_mp4v_video)
+
+        assert "VideoCamera" in video_urls
+        url = video_urls["VideoCamera"]
+        assert url.startswith("http://127.0.0.1:")
+        # The URL should point to the H.264-transcoded cache file
+        assert "_h264.mp4" in url
