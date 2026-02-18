@@ -11,6 +11,7 @@ def create_synthetic_video(
     width: int = 160,
     height: int = 120,
     fps: float = 30.0,
+    codec: str = "mp4v",
 ) -> Path:
     """Create a synthetic video file using OpenCV.
 
@@ -24,6 +25,8 @@ def create_synthetic_video(
         Video dimensions
     fps : float
         Frames per second
+    codec : str
+        FourCC codec string (e.g., "mp4v", "XVID", "avc1")
 
     Returns
     -------
@@ -32,7 +35,11 @@ def create_synthetic_video(
     """
     import cv2
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    if len(codec) != 4:
+        msg = "codec must be a 4-character FourCC string"
+        raise ValueError(msg)
+
+    fourcc = cv2.VideoWriter_fourcc(*codec)
     out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
     for frame_index in range(num_frames):
