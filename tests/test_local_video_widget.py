@@ -3,19 +3,22 @@
 import pytest
 
 from nwb_video_widgets import NWBLocalVideoPlayer
+from nwb_video_widgets._utils import _BROWSER_COMPATIBLE_CODECS, get_video_codec
 
 
 class TestVideoPathDiscovery:
     """Tests for discovering video paths from NWB files."""
 
     def test_discover_single_video(self, nwbfile_with_single_video):
-        """Test discovering a single external video."""
+        """Test discovering a single external video and that it is browser-compatible."""
         video_urls = NWBLocalVideoPlayer.get_video_urls_from_local(nwbfile_with_single_video)
 
         assert len(video_urls) == 1
         assert "VideoCamera" in video_urls
-        assert video_urls["VideoCamera"].startswith("http://127.0.0.1:")
-        assert video_urls["VideoCamera"].endswith(".mp4")
+        url = video_urls["VideoCamera"]
+        assert url.startswith("http://127.0.0.1:")
+        assert url.endswith(".mp4")
+        assert get_video_codec(url) in _BROWSER_COMPATIBLE_CODECS
 
     def test_discover_multiple_videos(self, nwbfile_with_multiple_videos):
         """Test discovering multiple external videos."""

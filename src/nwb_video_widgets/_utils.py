@@ -1,16 +1,99 @@
 """Shared utilities for NWB video widgets."""
 
+import hashlib
 import socket
+import tempfile
 import threading
 from functools import partial
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
+import av
 from pynwb import NWBFile
 from pynwb.image import ImageSeries
 
 # Global registry for video file servers
 _video_servers: dict[str, tuple[HTTPServer, int]] = {}
+
+# Codecs natively supported by all major browsers
+_BROWSER_COMPATIBLE_CODECS = {"h264", "vp8", "vp9", "av1"}
+
+
+def get_video_codec(video_path: Path) -> str:
+    """Return the codec name of the first video stream in a video file.
+
+    Parameters
+    ----------
+    video_path : Path
+        Path to the video file
+
+    Returns
+    -------
+    str
+        Codec name (e.g. ``"h264"``, ``"mpeg4"``, ``"vp9"``)
+    """
+    with av.open(str(video_path)) as container:
+        return container.streams.video[0].codec_context.name
+
+
+def _transcode_to_h264(source: str | Path, out_path: Path) -> None:
+    """Transcode a video to H.264/MP4 using PyAV.
+
+    Parameters
+    ----------
+    source : str or Path
+        Path or URL of the input video
+    out_path : Path
+        Destination path for the H.264-encoded output
+    """
+    with av.open(str(source)) as inp:
+        with av.open(str(out_path), "w", format="mp4", options={"movflags": "+faststart"}) as out:
+            in_stream = inp.streams.video[0]
+            rate = in_stream.average_rate or 30
+            out_stream = out.add_stream("libx264", rate=rate)
+            out_stream.width = in_stream.width
+            out_stream.height = in_stream.height
+            out_stream.pix_fmt = "yuv420p"
+            for frame in inp.decode(in_stream):
+                frame = frame.reformat(format="yuv420p")
+                for out_packet in out_stream.encode(frame):
+                    out.mux(out_packet)
+            for out_packet in out_stream.encode():
+                out.mux(out_packet)
+
+
+def ensure_browser_compatible_video(video_path: Path) -> Path:
+    """Return a path to a browser-compatible version of a video file.
+
+    If the video is already encoded with a browser-compatible codec (H.264,
+    VP8, VP9, or AV1) the original path is returned unchanged. Otherwise the
+    video is transcoded to H.264 using PyAV and cached in a temporary
+    directory so subsequent calls are instant.
+
+    Parameters
+    ----------
+    video_path : Path
+        Path to the original video file
+
+    Returns
+    -------
+    Path
+        Path to a browser-compatible video file (may be the same as input)
+    """
+    codec = get_video_codec(video_path)
+    if codec in _BROWSER_COMPATIBLE_CODECS:
+        return video_path
+
+    # Build a stable cache path based on the resolved absolute path
+    hash_val = hashlib.md5(str(video_path.resolve()).encode()).hexdigest()[:8]
+    cache_dir = Path(tempfile.gettempdir()) / "nwb_video_widgets"
+    cache_dir.mkdir(exist_ok=True)
+    out_path = cache_dir / f"{video_path.stem}_{hash_val}_h264.mp4"
+
+    if not out_path.exists():
+        _transcode_to_h264(video_path, out_path)
+
+    return out_path
 
 
 def discover_video_series(nwbfile: NWBFile) -> dict[str, ImageSeries]:
