@@ -58,6 +58,9 @@ Repository = "https://github.com/catalystneuro/nwb-video-widgets"
 [tool.hatch.build]
 artifacts = ["src/nwb_video_widgets/*.js", "src/nwb_video_widgets/*.css"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["tests/fixtures/videos/*.mp4", "tests/fixtures/videos/*.avi"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

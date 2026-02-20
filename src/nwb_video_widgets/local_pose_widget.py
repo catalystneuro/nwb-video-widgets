@@ -16,6 +16,7 @@ from nwb_video_widgets._utils import (
     discover_video_series,
     get_pose_estimation_info,
     start_video_server,
+    validate_video_codec,
 )
 
 
@@ -253,11 +254,12 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         if not video_series:
             return video_urls
 
-        # Collect all video directories and start servers
+        # Validate codecs and collect all video directories
         video_dirs: set[Path] = set()
         for series in video_series.values():
             relative_path = series.external_file[0].lstrip("./")
             video_path = (base_dir / relative_path).resolve()
+            validate_video_codec(video_path)
             video_dirs.add(video_path.parent)
 
         # Start servers for each unique directory
