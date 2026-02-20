@@ -1,50 +1,28 @@
 """Pytest fixtures for nwb-video-widgets tests."""
 
 import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
 from pynwb import NWBHDF5IO, read_nwb
 
 from tests.fixtures.synthetic_nwb import create_nwbfile_with_external_videos
-from tests.fixtures.synthetic_video import create_synthetic_video
 
-
-@pytest.fixture(scope="session")
-def session_tmp_path(tmp_path_factory):
-    """Create a session-scoped temporary directory."""
-    return tmp_path_factory.mktemp("session")
-
-
-@pytest.fixture(scope="session")
-def synthetic_video_path(session_tmp_path):
-    """Create a single synthetic video file for the test session."""
-    video_path = session_tmp_path / "test_video.mp4"
-    create_synthetic_video(video_path, num_frames=30, width=160, height=120)
-    return video_path
-
-
-@pytest.fixture(scope="session")
-def synthetic_video_paths(session_tmp_path):
-    """Create multiple synthetic video files for the test session."""
-    video_names = ["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]
-    paths = {}
-
-    for name in video_names:
-        video_path = session_tmp_path / f"{name}.mp4"
-        create_synthetic_video(video_path, num_frames=30)
-        paths[name] = video_path
-
-    return paths
+# Committed stub videos from DANDI (trimmed, 160x120, ~0.5s)
+_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "videos"
+STUB_H264_PATH = _FIXTURES_DIR / "stub_h264.mp4"
+STUB_MJPEG_PATH = _FIXTURES_DIR / "stub_mjpeg.avi"
+STUB_MP4V_PATH = _FIXTURES_DIR / "stub_mp4v.mp4"
 
 
 @pytest.fixture
-def nwbfile_with_single_video(tmp_path, synthetic_video_path):
+def nwbfile_with_single_video(tmp_path):
     """Create an NWB file with a single external video."""
-    video_copy = tmp_path / synthetic_video_path.name
-    shutil.copy(synthetic_video_path, video_copy)
+    video_path = tmp_path / "test_video.mp4"
+    shutil.copy(STUB_H264_PATH, video_path)
 
-    nwbfile = create_nwbfile_with_external_videos({"VideoCamera": video_copy})
+    nwbfile = create_nwbfile_with_external_videos({"VideoCamera": video_path})
     nwb_path = tmp_path / "test.nwb"
 
     with NWBHDF5IO(nwb_path, "w") as io:
@@ -54,15 +32,15 @@ def nwbfile_with_single_video(tmp_path, synthetic_video_path):
 
 
 @pytest.fixture
-def nwbfile_with_multiple_videos(tmp_path, synthetic_video_paths):
+def nwbfile_with_multiple_videos(tmp_path):
     """Create an NWB file with multiple external videos."""
-    copied_paths = {}
-    for name, path in synthetic_video_paths.items():
-        video_copy = tmp_path / path.name
-        shutil.copy(path, video_copy)
-        copied_paths[name] = video_copy
+    video_paths = {}
+    for name in ["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]:
+        video_path = tmp_path / f"{name}.mp4"
+        shutil.copy(STUB_H264_PATH, video_path)
+        video_paths[name] = video_path
 
-    nwbfile = create_nwbfile_with_external_videos(copied_paths)
+    nwbfile = create_nwbfile_with_external_videos(video_paths)
     nwb_path = tmp_path / "test.nwb"
 
     with NWBHDF5IO(nwb_path, "w") as io:
@@ -72,13 +50,13 @@ def nwbfile_with_multiple_videos(tmp_path, synthetic_video_paths):
 
 
 @pytest.fixture
-def nwbfile_with_explicit_timestamps(tmp_path, synthetic_video_path):
+def nwbfile_with_explicit_timestamps(tmp_path):
     """Create an NWB file with explicit timestamps."""
-    video_copy = tmp_path / synthetic_video_path.name
-    shutil.copy(synthetic_video_path, video_copy)
+    video_path = tmp_path / "test_video.mp4"
+    shutil.copy(STUB_H264_PATH, video_path)
 
     timestamps = {"VideoCamera": np.linspace(0.0, 1.0, 30)}
-    nwbfile = create_nwbfile_with_external_videos({"VideoCamera": video_copy}, timestamps=timestamps)
+    nwbfile = create_nwbfile_with_external_videos({"VideoCamera": video_path}, timestamps=timestamps)
     nwb_path = tmp_path / "test.nwb"
 
     with NWBHDF5IO(nwb_path, "w") as io:
