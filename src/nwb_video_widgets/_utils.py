@@ -223,6 +223,8 @@ def start_video_server(directory: Path) -> int:
 def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
     """Discover all PoseEstimation containers in an NWB file.
 
+    Searches all processing modules for PoseEstimation objects.
+
     Parameters
     ----------
     nwbfile : NWBFile
@@ -231,20 +233,14 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
     Returns
     -------
     dict
-        Mapping of camera names to PoseEstimation objects from
-        processing['pose_estimation'].
+        Mapping of camera names to PoseEstimation objects found across
+        all processing modules.
     """
-    if "pose_estimation" not in nwbfile.processing:
-        return {}
-
-    pose_module = nwbfile.processing["pose_estimation"]
-
-    # Get only PoseEstimation objects (not Skeletons or other types)
     cameras = {}
-    for name, obj in pose_module.data_interfaces.items():
-        if type(obj).__name__ == "PoseEstimation":
-            cameras[name] = obj
-
+    for module in nwbfile.processing.values():
+        for name, obj in module.data_interfaces.items():
+            if type(obj).__name__ == "PoseEstimation":
+                cameras[name] = obj
     return cameras
 
 
@@ -285,7 +281,7 @@ def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:
     Parameters
     ----------
     nwbfile : NWBFile
-        NWB file containing pose estimation in processing['pose_estimation']
+        NWB file containing pose estimation data in any processing module
 
     Returns
     -------
