@@ -239,7 +239,8 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
     """
     cameras = {}
     for obj in nwbfile.objects.values():
-        if type(obj).__name__ == "PoseEstimation":
+        if obj.neurodata_type == "PoseEstimation":
+            assert obj.name not in cameras, f"Duplicate PoseEstimation name found: {obj.name}"
             cameras[obj.name] = obj
     return cameras
 
