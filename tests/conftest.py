@@ -7,14 +7,11 @@ import numpy as np
 import pytest
 from pynwb import NWBHDF5IO, read_nwb
 
-from tests.fixtures.synthetic_nwb import create_nwbfile_with_external_videos
 from tests.fixtures.synthetic_nwb import (
     create_nwbfile_with_external_videos,
     create_nwbfile_with_pose_estimation,
     create_nwbfile_with_videos_and_pose,
-    create_synthetic_video,
 )
-from tests.fixtures.synthetic_video import create_synthetic_video
 
 # Committed stub videos from DANDI (trimmed, 160x120, ~0.5s)
 _FIXTURES_DIR = Path(__file__).parent / "fixtures" / "videos"
@@ -105,20 +102,18 @@ def nwbfile_with_multiple_cameras_pose(tmp_path):
 
 
 @pytest.fixture
-def nwbfile_with_videos_and_pose(tmp_path, synthetic_video_paths):
+def nwbfile_with_videos_and_pose(tmp_path):
     """Create an NWB file with both videos and pose estimation."""
-    copied_paths = {}
-    for name, path in synthetic_video_paths.items():
-        video_copy = tmp_path / path.name
-        shutil.copy(path, video_copy)
-        copied_paths[name] = video_copy
+    video_paths = {}
+    for name in ["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]:
+        video_path = tmp_path / f"{name}.mp4"
+        shutil.copy(STUB_H264_PATH, video_path)
+        video_paths[name] = video_path
 
-    # Create pose estimation for cameras that match video names
-    # VideoLeftCamera -> LeftCamera, etc.
-    camera_names = [name.replace("Video", "") for name in copied_paths.keys()]
+    camera_names = [name.replace("Video", "") for name in video_paths.keys()]
 
     nwbfile = create_nwbfile_with_videos_and_pose(
-        video_paths=copied_paths,
+        video_paths=video_paths,
         camera_names=camera_names,
         keypoint_names=["Nose", "LeftEar", "RightEar"],
         num_frames=30,
