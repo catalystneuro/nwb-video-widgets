@@ -404,6 +404,10 @@ def start_video_server(directory: Path) -> int:
 def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
     """Discover all PoseEstimation containers in an NWB file.
 
+    Searches all objects in the file regardless of where they are stored,
+    so PoseEstimation data in any processing module (e.g. 'pose_estimation',
+    'behavior') is found.
+
     Parameters
     ----------
     nwbfile : NWBFile
@@ -412,20 +416,13 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
     Returns
     -------
     dict
-        Mapping of camera names to PoseEstimation objects from
-        processing['pose_estimation'].
+        Mapping of camera names to PoseEstimation objects.
     """
-    if "pose_estimation" not in nwbfile.processing:
-        return {}
-
-    pose_module = nwbfile.processing["pose_estimation"]
-
-    # Get only PoseEstimation objects (not Skeletons or other types)
     cameras = {}
-    for name, obj in pose_module.data_interfaces.items():
-        if type(obj).__name__ == "PoseEstimation":
-            cameras[name] = obj
-
+    for obj in nwbfile.objects.values():
+        if obj.neurodata_type == "PoseEstimation":
+            assert obj.name not in cameras, f"Duplicate PoseEstimation name found: {obj.name}"
+            cameras[obj.name] = obj
     return cameras
 
 

@@ -102,6 +102,40 @@ def nwbfile_with_multiple_cameras_pose(tmp_path):
 
 
 @pytest.fixture
+def nwbfile_with_behavior_module_pose(tmp_path):
+    """Create an NWB file with pose estimation stored in the 'behavior' processing module."""
+    nwbfile = create_nwbfile_with_pose_estimation(
+        camera_names=["LeftCamera"],
+        keypoint_names=["Nose", "LeftEar", "RightEar"],
+        num_frames=30,
+        processing_module_name="behavior",
+    )
+    nwb_path = tmp_path / "test_behavior_pose.nwb"
+
+    with NWBHDF5IO(nwb_path, "w") as io:
+        io.write(nwbfile)
+
+    return read_nwb(nwb_path)
+
+
+@pytest.fixture
+def nwbfile_with_custom_module_pose(tmp_path):
+    """Create an NWB file with pose estimation stored in a custom-named processing module."""
+    nwbfile = create_nwbfile_with_pose_estimation(
+        camera_names=["LeftCamera", "RightCamera"],
+        keypoint_names=["Nose", "LeftEar"],
+        num_frames=30,
+        processing_module_name="my_custom_module",
+    )
+    nwb_path = tmp_path / "test_custom_pose.nwb"
+
+    with NWBHDF5IO(nwb_path, "w") as io:
+        io.write(nwbfile)
+
+    return read_nwb(nwb_path)
+
+
+@pytest.fixture
 def nwbfile_with_videos_and_pose(tmp_path):
     """Create an NWB file with both videos and pose estimation."""
     video_paths = {}
