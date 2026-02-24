@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from neuroconv.tools.testing.mock_interfaces import MockPoseEstimationInterface
-from pynwb import NWBFile
+from pynwb import NWBFile, ProcessingModule
 from pynwb.image import ImageSeries
 from pynwb.testing.mock.file import mock_NWBFile
 
@@ -53,67 +53,49 @@ def create_nwbfile_with_external_videos(
     return nwbfile
 
 
-def _add_cameras_via_mock_interface(
-    nwbfile: NWBFile,
+def _add_pose_estimation_to_module(
+    pose_module: ProcessingModule,
     camera_names: list[str],
-    num_nodes: int,
-    num_frames: int,
-    seed: int,
+    mock_interface: MockPoseEstimationInterface,
+    timestamps: np.ndarray,
 ) -> None:
-    """Add PoseEstimation containers to an NWBFile using MockPoseEstimationInterface.add_to_nwbfile.
-
-    Uses add_to_nwbfile for the first camera (which creates the behavior module, device,
-    and skeleton), then adds subsequent cameras directly to the existing behavior module.
+    """Add PoseEstimation containers to a processing module using MockPoseEstimationInterface data.
 
     Parameters
     ----------
-    nwbfile : NWBFile
-        The NWB file to add pose estimation data to
+    pose_module : ProcessingModule
+        The NWB processing module to add pose estimation containers to
     camera_names : list[str]
         Names for each PoseEstimation container
-    num_nodes : int
-        Number of keypoint nodes per camera
-    num_frames : int
-        Number of frames of pose data
-    seed : int
-        Random seed for reproducible data generation
+    mock_interface : MockPoseEstimationInterface
+        NeuroConv mock interface providing pose data and node names
+    timestamps : np.ndarray
+        Timestamps for all pose estimation series
     """
     from ndx_pose import PoseEstimation, PoseEstimationSeries
 
-    for i, camera_name in enumerate(camera_names):
-        mock = MockPoseEstimationInterface(
-            pose_estimation_metadata_key=camera_name,
-            num_nodes=num_nodes,
-            num_samples=num_frames,
-            seed=seed,
-        )
-        if i == 0:
-            # First camera: use add_to_nwbfile to create the behavior module, device, and skeleton
-            mock.add_to_nwbfile(nwbfile)
-        else:
-            # Additional cameras: add PoseEstimation directly to the existing behavior module
-            # (avoids Device/Skeleton naming conflicts from repeated add_to_nwbfile calls)
-            behavior_module = nwbfile.processing["behavior"]
-            timestamps = mock.get_timestamps()
-            pose_series_list = []
-            for idx, node_name in enumerate(mock.nodes):
-                pascal_case_node = "".join(word.capitalize() for word in node_name.replace("_", " ").split())
-                series = PoseEstimationSeries(
-                    name=f"PoseEstimationSeries{pascal_case_node}",
-                    data=mock.pose_data[:num_frames, idx, :],
-                    unit="pixels",
-                    reference_frame="top-left corner",
-                    timestamps=timestamps,
-                    confidence=np.ones(num_frames),
-                    confidence_definition="Mock confidence",
-                )
-                pose_series_list.append(series)
-            pose_estimation = PoseEstimation(
-                name=camera_name,
-                pose_estimation_series=pose_series_list,
-                description=f"Pose estimation for {camera_name}",
+    num_frames = len(timestamps)
+    for camera_name in camera_names:
+        pose_series_list = []
+        for idx, node_name in enumerate(mock_interface.nodes):
+            pascal_case_node = "".join(word.capitalize() for word in node_name.replace("_", " ").split())
+            series = PoseEstimationSeries(
+                name=f"PoseEstimationSeries{pascal_case_node}",
+                data=mock_interface.pose_data[:num_frames, idx, :],
+                unit="pixels",
+                reference_frame="top-left corner",
+                timestamps=timestamps,
+                confidence=np.ones(num_frames),
+                confidence_definition="Mock confidence",
             )
-            behavior_module.add(pose_estimation)
+            pose_series_list.append(series)
+
+        pose_estimation = PoseEstimation(
+            name=camera_name,
+            pose_estimation_series=pose_series_list,
+            description=f"Pose estimation for {camera_name}",
+        )
+        pose_module.add(pose_estimation)
 
 
 def create_nwbfile_with_pose_estimation(
@@ -138,10 +120,21 @@ def create_nwbfile_with_pose_estimation(
     Returns
     -------
     NWBFile
-        NWB file with pose estimation in the behavior processing module
+        NWB file with pose estimation processing module
     """
     nwbfile = mock_NWBFile()
-    _add_cameras_via_mock_interface(nwbfile, camera_names, num_nodes, num_frames, seed)
+
+    pose_module = ProcessingModule(
+        name="pose_estimation",
+        description="Pose estimation data from DeepLabCut or similar",
+    )
+    nwbfile.add_processing_module(pose_module)
+
+    mock_interface = MockPoseEstimationInterface(num_nodes=num_nodes, num_samples=num_frames, seed=seed)
+    timestamps = mock_interface.get_timestamps()
+
+    _add_pose_estimation_to_module(pose_module, camera_names, mock_interface, timestamps)
+
     return nwbfile
 
 
@@ -201,6 +194,22 @@ def create_nwbfile_with_videos_and_pose(
 
         nwbfile.add_acquisition(image_series)
 
-    _add_cameras_via_mock_interface(nwbfile, camera_names, num_nodes, num_frames, seed)
+    # Add pose estimation
+    pose_module = ProcessingModule(
+        name="pose_estimation",
+        description="Pose estimation data from DeepLabCut or similar",
+    )
+    nwbfile.add_processing_module(pose_module)
+
+    # Use first video's timestamps if provided, otherwise use mock's timestamps
+    if timestamps:
+        pose_timestamps = next(iter(timestamps.values()))
+    else:
+        mock_interface = MockPoseEstimationInterface(num_nodes=num_nodes, num_samples=num_frames, seed=seed)
+        pose_timestamps = mock_interface.get_timestamps()
+
+    mock_interface = MockPoseEstimationInterface(num_nodes=num_nodes, num_samples=len(pose_timestamps), seed=seed)
+
+    _add_pose_estimation_to_module(pose_module, camera_names, mock_interface, pose_timestamps)
 
     return nwbfile

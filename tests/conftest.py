@@ -95,7 +95,7 @@ def nwbfile_with_explicit_timestamps(tmp_path, synthetic_video_path):
 def nwbfile_with_single_camera_pose(tmp_path):
     """Create an NWB file with pose estimation for a single camera."""
     nwbfile = create_nwbfile_with_pose_estimation(
-        camera_names=["MockPoseEstimation"],
+        camera_names=["LeftCamera"],
         num_nodes=3,
         num_frames=30,
     )
@@ -111,7 +111,7 @@ def nwbfile_with_single_camera_pose(tmp_path):
 def nwbfile_with_multiple_cameras_pose(tmp_path):
     """Create an NWB file with pose estimation for multiple cameras."""
     nwbfile = create_nwbfile_with_pose_estimation(
-        camera_names=["MockPoseEstimation", "RightCamera", "BodyCamera"],
+        camera_names=["LeftCamera", "RightCamera", "BodyCamera"],
         num_nodes=5,
         num_frames=30,
     )

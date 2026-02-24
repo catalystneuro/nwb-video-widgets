@@ -17,18 +17,18 @@ class TestPoseEstimationDiscovery:
         cameras = discover_pose_estimation_cameras(nwbfile_with_single_camera_pose)
 
         assert len(cameras) == 1
-        assert "MockPoseEstimation" in cameras
+        assert "LeftCamera" in cameras
 
         # Check that the camera has pose estimation series
-        camera_pose = cameras["MockPoseEstimation"]
-        assert len(camera_pose.pose_estimation_series) == 3
+        camera_pose = cameras["LeftCamera"]
+        assert len(camera_pose.pose_estimation_series) == 3  # Nose, LeftEar, RightEar
 
     def test_discover_multiple_cameras(self, nwbfile_with_multiple_cameras_pose):
         """Test discovering pose estimation from multiple cameras."""
         cameras = discover_pose_estimation_cameras(nwbfile_with_multiple_cameras_pose)
 
         assert len(cameras) == 3
-        assert "MockPoseEstimation" in cameras
+        assert "LeftCamera" in cameras
         assert "RightCamera" in cameras
         assert "BodyCamera" in cameras
 
@@ -41,6 +41,9 @@ class TestPoseEstimationDiscovery:
         cameras = discover_pose_estimation_cameras(nwbfile_with_videos_and_pose)
 
         assert len(cameras) == 3
+        assert "LeftCamera" in cameras
+        assert "RightCamera" in cameras
+        assert "BodyCamera" in cameras
 
 
 class TestCameraInfoExtraction:
@@ -51,9 +54,9 @@ class TestCameraInfoExtraction:
         info = get_pose_estimation_info(nwbfile_with_single_camera_pose)
 
         assert len(info) == 1
-        assert "MockPoseEstimation" in info
+        assert "LeftCamera" in info
 
-        camera_info = info["MockPoseEstimation"]
+        camera_info = info["LeftCamera"]
         assert "start" in camera_info
         assert "end" in camera_info
         assert "frames" in camera_info
@@ -71,7 +74,7 @@ class TestCameraInfoExtraction:
 
         assert len(info) == 3
 
-        for camera_name in ["MockPoseEstimation", "RightCamera", "BodyCamera"]:
+        for camera_name in ["LeftCamera", "RightCamera", "BodyCamera"]:
             assert camera_name in info
             camera_info = info[camera_name]
             assert camera_info["frames"] == 30
@@ -86,7 +89,7 @@ class TestWidgetCreation:
         widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
 
         assert len(widget.available_cameras) == 1
-        assert "MockPoseEstimation" in widget.available_cameras
+        assert "LeftCamera" in widget.available_cameras
         assert widget.settings_open is True
         assert widget.selected_camera == ""  # No camera selected by default
 
@@ -95,7 +98,7 @@ class TestWidgetCreation:
         widget = NWBLocalPoseEstimationWidget(nwbfile_with_multiple_cameras_pose)
 
         assert len(widget.available_cameras) == 3
-        assert "MockPoseEstimation" in widget.available_cameras
+        assert "LeftCamera" in widget.available_cameras
         assert "RightCamera" in widget.available_cameras
         assert "BodyCamera" in widget.available_cameras
         assert widget.settings_open is True
@@ -113,10 +116,10 @@ class TestWidgetCreation:
     def test_default_camera_selection(self, nwbfile_with_single_camera_pose):
         """Test selecting a default camera."""
         widget = NWBLocalPoseEstimationWidget(
-            nwbfile_with_single_camera_pose, default_camera="MockPoseEstimation"
+            nwbfile_with_single_camera_pose, default_camera="LeftCamera"
         )
 
-        assert widget.selected_camera == "MockPoseEstimation"
+        assert widget.selected_camera == "LeftCamera"
 
     def test_invalid_default_camera(self, nwbfile_with_single_camera_pose):
         """Test that invalid default camera falls back to no selection."""
@@ -145,11 +148,11 @@ class TestLazyLoading:
         assert len(widget.all_camera_data) == 0
 
         # Select camera
-        widget.selected_camera = "MockPoseEstimation"
+        widget.selected_camera = "LeftCamera"
 
         # Data should be loaded now
-        assert "MockPoseEstimation" in widget.all_camera_data
-        camera_data = widget.all_camera_data["MockPoseEstimation"]
+        assert "LeftCamera" in widget.all_camera_data
+        camera_data = widget.all_camera_data["LeftCamera"]
 
         assert "keypoint_metadata" in camera_data
         assert "pose_coordinates" in camera_data
@@ -172,8 +175,8 @@ class TestKeypointColors:
         """Test that default colormap is applied."""
         widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
 
-        widget.selected_camera = "MockPoseEstimation"
-        camera_data = widget.all_camera_data["MockPoseEstimation"]
+        widget.selected_camera = "LeftCamera"
+        camera_data = widget.all_camera_data["LeftCamera"]
 
         # Each keypoint should have a color
         for keypoint_name, metadata in camera_data["keypoint_metadata"].items():
@@ -192,8 +195,8 @@ class TestKeypointColors:
             nwbfile_with_single_camera_pose, keypoint_colors=custom_colors
         )
 
-        widget.selected_camera = "MockPoseEstimation"
-        camera_data = widget.all_camera_data["MockPoseEstimation"]
+        widget.selected_camera = "LeftCamera"
+        camera_data = widget.all_camera_data["LeftCamera"]
 
         # Check custom colors are applied
         assert camera_data["keypoint_metadata"]["Head"]["color"] == "#FF0000"
@@ -206,8 +209,8 @@ class TestKeypointColors:
             nwbfile_with_single_camera_pose, keypoint_colors="Set1"
         )
 
-        widget.selected_camera = "MockPoseEstimation"
-        camera_data = widget.all_camera_data["MockPoseEstimation"]
+        widget.selected_camera = "LeftCamera"
+        camera_data = widget.all_camera_data["LeftCamera"]
 
         # Verify colors are assigned (just check they exist)
         for keypoint_name in ["Head", "Neck", "LeftShoulder"]:
@@ -218,8 +221,8 @@ class TestErrorHandling:
     """Tests for error handling."""
 
     def test_raises_for_missing_pose_module(self, nwbfile_with_single_video):
-        """Test that error is raised when no PoseEstimation data is present."""
-        with pytest.raises(ValueError, match="PoseEstimation data"):
+        """Test that error is raised when pose_estimation module is missing."""
+        with pytest.raises(ValueError, match="pose_estimation processing module"):
             NWBLocalPoseEstimationWidget(nwbfile_with_single_video)
 
     def test_raises_for_in_memory_nwbfile(self):

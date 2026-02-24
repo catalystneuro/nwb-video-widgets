@@ -31,7 +31,6 @@ dependencies = [
     "numpy",
     "matplotlib",
     "ipykernel>=7.1.0",
-    "ndx-pose",
 ]
 
 [project.optional-dependencies]
