@@ -41,6 +41,7 @@ dandi = ["dandi>=0.60.0", "remfile>=0.1.13", "h5py"]
 test = [
     "pytest>=7.0",
     "pytest-cov",
+    "ndx-pose",
 ]
 
 dev = [

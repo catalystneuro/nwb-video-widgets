@@ -10,6 +10,8 @@
 
 ## Improvements
 
+* Added comprehensive unit tests for PoseEstimation widgets covering discovery, widget creation, lazy loading, keypoint colors, error handling, and video mapping. [PR #16](https://github.com/catalystneuro/nwb-video-widgets/pull/16)
+
 # v0.1.5 (2026-02-03)
 
 ## Removals, Deprecations and Changes
