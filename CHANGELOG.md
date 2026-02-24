@@ -16,6 +16,7 @@
 * Replaced OpenCV-generated synthetic test videos with committed stub videos from DANDI (H.264, MJPEG, mp4v) at 160x120 resolution. [PR #24](https://github.com/catalystneuro/nwb-video-widgets/pull/24)
 * Added comprehensive unit tests for PoseEstimation widgets covering discovery, widget creation, lazy loading, keypoint colors, error handling, and video mapping. [PR #16](https://github.com/catalystneuro/nwb-video-widgets/pull/16)
 * Added support for Pose Estimation Objects anywhere in the NWB file [PR #17](https://github.com/catalystneuro/nwb-video-widgets/pull/17)
+* Updated readme to describe supported video codecs [PR #25](https://github.com/catalystneuro/nwb-video-widgets/pull/25)
 
 # v0.1.5 (2026-02-03)
 
