@@ -1,5 +1,6 @@
 """Integration tests for local NWB file handling."""
 
+import shutil
 import urllib.request
 
 import numpy as np
@@ -7,8 +8,8 @@ import pytest
 from pynwb import NWBHDF5IO, read_nwb
 
 from nwb_video_widgets import NWBLocalVideoPlayer
+from tests.conftest import STUB_H264_PATH
 from tests.fixtures.synthetic_nwb import create_nwbfile_with_external_videos
-from tests.fixtures.synthetic_video import create_synthetic_video
 
 
 @pytest.mark.integration
@@ -18,7 +19,7 @@ class TestLocalVideoRoundtrip:
     def test_create_and_load_nwb_with_video(self, tmp_path):
         """Create NWB with external video, save, reload, and verify widget works."""
         video_path = tmp_path / "test_video.mp4"
-        create_synthetic_video(video_path, num_frames=30)
+        shutil.copy(STUB_H264_PATH, video_path)
 
         nwbfile = create_nwbfile_with_external_videos({"VideoCamera": video_path})
         nwb_path = tmp_path / "test.nwb"
@@ -43,7 +44,7 @@ class TestLocalVideoRoundtrip:
         video_paths = {}
         for name in ["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]:
             video_path = tmp_path / f"{name}.mp4"
-            create_synthetic_video(video_path, num_frames=20)
+            shutil.copy(STUB_H264_PATH, video_path)
             video_paths[name] = video_path
 
         nwbfile = create_nwbfile_with_external_videos(video_paths)
@@ -68,7 +69,7 @@ class TestLocalVideoRoundtrip:
     def test_timestamps_preserved_through_roundtrip(self, tmp_path):
         """Test that explicit timestamps are correctly extracted after roundtrip."""
         video_path = tmp_path / "test_video.mp4"
-        create_synthetic_video(video_path, num_frames=30)
+        shutil.copy(STUB_H264_PATH, video_path)
 
         expected_timestamps = np.linspace(0.0, 2.0, 30)
         nwbfile = create_nwbfile_with_external_videos(
