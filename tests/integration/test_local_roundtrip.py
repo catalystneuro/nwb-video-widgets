@@ -8,8 +8,8 @@ import pytest
 from pynwb import NWBHDF5IO, read_nwb
 
 from nwb_video_widgets import NWBLocalVideoPlayer
+from nwb_video_widgets.testing.synthetic_nwb import create_nwbfile_with_external_videos
 from tests.conftest import STUB_H264_PATH
-from tests.fixtures.synthetic_nwb import create_nwbfile_with_external_videos
 
 
 @pytest.mark.integration

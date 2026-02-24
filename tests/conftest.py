@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from pynwb import NWBHDF5IO, read_nwb
 
-from tests.fixtures.synthetic_nwb import (
+from nwb_video_widgets.testing.synthetic_nwb import (
     create_nwbfile_with_external_videos,
     create_nwbfile_with_pose_estimation,
     create_nwbfile_with_videos_and_pose,
