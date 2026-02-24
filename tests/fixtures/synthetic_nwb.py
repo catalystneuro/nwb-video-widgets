@@ -60,6 +60,7 @@ def create_nwbfile_with_pose_estimation(
     timestamps: np.ndarray | None = None,
     video_width: int = 160,
     video_height: int = 120,
+    processing_module_name: str = "pose_estimation",
 ) -> NWBFile:
     """Create an NWBFile with PoseEstimation data.
 
@@ -77,6 +78,8 @@ def create_nwbfile_with_pose_estimation(
         Width of the source video in pixels, by default 160
     video_height : int, optional
         Height of the source video in pixels, by default 120
+    processing_module_name : str, optional
+        Name of the processing module to store pose data in, by default "pose_estimation"
 
     Returns
     -------
@@ -85,9 +88,9 @@ def create_nwbfile_with_pose_estimation(
     """
     nwbfile = mock_NWBFile()
 
-    # Create pose_estimation processing module
+    # Create pose estimation processing module
     pose_module = ProcessingModule(
-        name="pose_estimation",
+        name=processing_module_name,
         description="Pose estimation data from DeepLabCut or similar",
     )
     nwbfile.add_processing_module(pose_module)

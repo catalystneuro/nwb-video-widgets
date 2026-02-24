@@ -137,8 +137,8 @@ class TestErrorHandling:
     """Tests for error handling."""
 
     def test_raises_for_missing_pose_module(self, nwbfile_with_single_video):
-        """Test that error is raised when pose_estimation module is missing."""
-        with pytest.raises(ValueError, match="pose_estimation processing module"):
+        """Test that error is raised when no PoseEstimation objects are found."""
+        with pytest.raises(ValueError, match="NWB file does not contain any PoseEstimation objects"):
             NWBLocalPoseEstimationWidget(nwbfile_with_single_video)
 
     def test_raises_for_in_memory_nwbfile(self):
@@ -171,6 +171,37 @@ class TestErrorHandling:
 
         with pytest.raises(ValueError, match="loaded from disk"):
             NWBLocalPoseEstimationWidget(nwbfile)
+
+
+class TestProcessingModuleLocation:
+    """Tests that pose estimation is discovered regardless of processing module name."""
+
+    def test_pose_in_pose_estimation_module(self, nwbfile_with_single_camera_pose):
+        """Standard case: pose in 'pose_estimation' processing module."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
+        assert "LeftCamera" in widget.available_cameras
+
+    def test_pose_in_behavior_module(self, nwbfile_with_behavior_module_pose):
+        """Pose stored in 'behavior' module is discovered correctly."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_behavior_module_pose)
+        assert len(widget.available_cameras) == 1
+        assert "LeftCamera" in widget.available_cameras
+
+    def test_pose_data_loads_from_behavior_module(self, nwbfile_with_behavior_module_pose):
+        """Pose data in 'behavior' module loads correctly on camera selection."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_behavior_module_pose)
+        widget.selected_camera = "LeftCamera"
+        assert "LeftCamera" in widget.all_camera_data
+        camera_data = widget.all_camera_data["LeftCamera"]
+        assert "keypoint_metadata" in camera_data
+        assert "Nose" in camera_data["keypoint_metadata"]
+
+    def test_pose_in_custom_module(self, nwbfile_with_custom_module_pose):
+        """Pose stored in a custom-named module is discovered correctly."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_custom_module_pose)
+        assert len(widget.available_cameras) == 2
+        assert "LeftCamera" in widget.available_cameras
+        assert "RightCamera" in widget.available_cameras
 
 
 class TestVideoNameMapping:
