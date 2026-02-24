@@ -64,9 +64,9 @@ class TestCameraInfoExtraction:
 
         assert camera_info["frames"] == 30
         assert len(camera_info["keypoints"]) == 3
-        assert "Head" in camera_info["keypoints"]
-        assert "Neck" in camera_info["keypoints"]
-        assert "LeftShoulder" in camera_info["keypoints"]
+        assert "Nose" in camera_info["keypoints"]
+        assert "LeftEar" in camera_info["keypoints"]
+        assert "RightEar" in camera_info["keypoints"]
 
     def test_camera_info_multiple(self, nwbfile_with_multiple_cameras_pose):
         """Test extracting info for multiple cameras."""
@@ -159,12 +159,12 @@ class TestLazyLoading:
         assert "timestamps" in camera_data
 
         # Check keypoints
-        assert "Head" in camera_data["keypoint_metadata"]
-        assert "Neck" in camera_data["keypoint_metadata"]
-        assert "LeftShoulder" in camera_data["keypoint_metadata"]
+        assert "Nose" in camera_data["keypoint_metadata"]
+        assert "LeftEar" in camera_data["keypoint_metadata"]
+        assert "RightEar" in camera_data["keypoint_metadata"]
 
         # Check coordinates structure
-        assert len(camera_data["pose_coordinates"]["Head"]) == 30
+        assert len(camera_data["pose_coordinates"]["Nose"]) == 30
         assert len(camera_data["timestamps"]) == 30
 
 
@@ -186,9 +186,9 @@ class TestKeypointColors:
     def test_custom_colors(self, nwbfile_with_single_camera_pose):
         """Test custom color assignment."""
         custom_colors = {
-            "Head": "#FF0000",
-            "Neck": "#00FF00",
-            "LeftShoulder": "#0000FF",
+            "Nose": "#FF0000",
+            "LeftEar": "#00FF00",
+            "RightEar": "#0000FF",
         }
 
         widget = NWBLocalPoseEstimationWidget(
@@ -199,9 +199,9 @@ class TestKeypointColors:
         camera_data = widget.all_camera_data["LeftCamera"]
 
         # Check custom colors are applied
-        assert camera_data["keypoint_metadata"]["Head"]["color"] == "#FF0000"
-        assert camera_data["keypoint_metadata"]["Neck"]["color"] == "#00FF00"
-        assert camera_data["keypoint_metadata"]["LeftShoulder"]["color"] == "#0000FF"
+        assert camera_data["keypoint_metadata"]["Nose"]["color"] == "#FF0000"
+        assert camera_data["keypoint_metadata"]["LeftEar"]["color"] == "#00FF00"
+        assert camera_data["keypoint_metadata"]["RightEar"]["color"] == "#0000FF"
 
     def test_different_colormap(self, nwbfile_with_single_camera_pose):
         """Test using a different colormap."""
@@ -213,7 +213,7 @@ class TestKeypointColors:
         camera_data = widget.all_camera_data["LeftCamera"]
 
         # Verify colors are assigned (just check they exist)
-        for keypoint_name in ["Head", "Neck", "LeftShoulder"]:
+        for keypoint_name in ["Nose", "LeftEar", "RightEar"]:
             assert "color" in camera_data["keypoint_metadata"][keypoint_name]
 
 
@@ -227,10 +227,31 @@ class TestErrorHandling:
 
     def test_raises_for_in_memory_nwbfile(self):
         """Test that error is raised for NWB files not loaded from disk."""
-        from tests.fixtures.synthetic_nwb import create_nwbfile_with_pose_estimation
+        from ndx_pose import PoseEstimation, PoseEstimationSeries
+        from pynwb import ProcessingModule
+        from pynwb.testing.mock.file import mock_NWBFile
 
-        # Create an in-memory NWBFile (not written to disk and read back)
-        nwbfile = create_nwbfile_with_pose_estimation(camera_names=["TestCamera"])
+        nwbfile = mock_NWBFile()
+
+        # Add pose estimation to in-memory file
+        pose_module = ProcessingModule(
+            name="pose_estimation",
+            description="Test pose estimation",
+        )
+        nwbfile.add_processing_module(pose_module)
+
+        # Create a simple pose estimation
+        series = PoseEstimationSeries(
+            name="NosePoseEstimationSeries",
+            data=[[100.0, 200.0], [101.0, 201.0]],
+            reference_frame="top-left",
+            timestamps=[0.0, 0.1],
+        )
+        pose_estimation = PoseEstimation(
+            name="TestCamera",
+            pose_estimation_series=[series],
+        )
+        pose_module.add(pose_estimation)
 
         with pytest.raises(ValueError, match="loaded from disk"):
             NWBLocalPoseEstimationWidget(nwbfile)

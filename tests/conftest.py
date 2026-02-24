@@ -96,7 +96,7 @@ def nwbfile_with_single_camera_pose(tmp_path):
     """Create an NWB file with pose estimation for a single camera."""
     nwbfile = create_nwbfile_with_pose_estimation(
         camera_names=["LeftCamera"],
-        num_nodes=3,
+        keypoint_names=["Nose", "LeftEar", "RightEar"],
         num_frames=30,
     )
     nwb_path = tmp_path / "test_pose.nwb"
@@ -112,7 +112,7 @@ def nwbfile_with_multiple_cameras_pose(tmp_path):
     """Create an NWB file with pose estimation for multiple cameras."""
     nwbfile = create_nwbfile_with_pose_estimation(
         camera_names=["LeftCamera", "RightCamera", "BodyCamera"],
-        num_nodes=5,
+        keypoint_names=["Nose", "LeftEar", "RightEar", "LeftPaw", "RightPaw"],
         num_frames=30,
     )
     nwb_path = tmp_path / "test_multi_pose.nwb"
@@ -139,7 +139,7 @@ def nwbfile_with_videos_and_pose(tmp_path, synthetic_video_paths):
     nwbfile = create_nwbfile_with_videos_and_pose(
         video_paths=copied_paths,
         camera_names=camera_names,
-        num_nodes=3,
+        keypoint_names=["Nose", "LeftEar", "RightEar"],
         num_frames=30,
     )
     nwb_path = tmp_path / "test_combined.nwb"

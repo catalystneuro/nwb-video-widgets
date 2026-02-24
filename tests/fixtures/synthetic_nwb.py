@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import numpy as np
-from neuroconv.tools.testing.mock_interfaces import MockPoseEstimationInterface
+from ndx_pose import PoseEstimation, PoseEstimationSeries
 from pynwb import NWBFile, ProcessingModule
 from pynwb.image import ImageSeries
 from pynwb.testing.mock.file import mock_NWBFile
@@ -53,69 +53,30 @@ def create_nwbfile_with_external_videos(
     return nwbfile
 
 
-def _add_pose_estimation_to_module(
-    pose_module: ProcessingModule,
-    camera_names: list[str],
-    mock_interface: MockPoseEstimationInterface,
-    timestamps: np.ndarray,
-) -> None:
-    """Add PoseEstimation containers to a processing module using MockPoseEstimationInterface data.
-
-    Parameters
-    ----------
-    pose_module : ProcessingModule
-        The NWB processing module to add pose estimation containers to
-    camera_names : list[str]
-        Names for each PoseEstimation container
-    mock_interface : MockPoseEstimationInterface
-        NeuroConv mock interface providing pose data and node names
-    timestamps : np.ndarray
-        Timestamps for all pose estimation series
-    """
-    from ndx_pose import PoseEstimation, PoseEstimationSeries
-
-    num_frames = len(timestamps)
-    for camera_name in camera_names:
-        pose_series_list = []
-        for idx, node_name in enumerate(mock_interface.nodes):
-            pascal_case_node = "".join(word.capitalize() for word in node_name.replace("_", " ").split())
-            series = PoseEstimationSeries(
-                name=f"PoseEstimationSeries{pascal_case_node}",
-                data=mock_interface.pose_data[:num_frames, idx, :],
-                unit="pixels",
-                reference_frame="top-left corner",
-                timestamps=timestamps,
-                confidence=np.ones(num_frames),
-                confidence_definition="Mock confidence",
-            )
-            pose_series_list.append(series)
-
-        pose_estimation = PoseEstimation(
-            name=camera_name,
-            pose_estimation_series=pose_series_list,
-            description=f"Pose estimation for {camera_name}",
-        )
-        pose_module.add(pose_estimation)
-
-
 def create_nwbfile_with_pose_estimation(
     camera_names: list[str],
-    num_nodes: int = 3,
+    keypoint_names: list[str],
     num_frames: int = 30,
-    seed: int = 0,
+    timestamps: np.ndarray | None = None,
+    video_width: int = 160,
+    video_height: int = 120,
 ) -> NWBFile:
-    """Create an NWBFile with PoseEstimation data using NeuroConv's MockPoseEstimationInterface.
+    """Create an NWBFile with PoseEstimation data.
 
     Parameters
     ----------
     camera_names : list[str]
         Names of cameras to create pose estimation data for
-    num_nodes : int, optional
-        Number of keypoint nodes per camera, by default 3
+    keypoint_names : list[str]
+        Names of keypoints to track
     num_frames : int, optional
         Number of frames of pose data, by default 30
-    seed : int, optional
-        Random seed for reproducible data generation, by default 0
+    timestamps : np.ndarray, optional
+        Timestamps for the pose data. If None, uses evenly spaced from 0 to 1.
+    video_width : int, optional
+        Width of the source video in pixels, by default 160
+    video_height : int, optional
+        Height of the source video in pixels, by default 120
 
     Returns
     -------
@@ -124,16 +85,51 @@ def create_nwbfile_with_pose_estimation(
     """
     nwbfile = mock_NWBFile()
 
+    # Create pose_estimation processing module
     pose_module = ProcessingModule(
         name="pose_estimation",
         description="Pose estimation data from DeepLabCut or similar",
     )
     nwbfile.add_processing_module(pose_module)
 
-    mock_interface = MockPoseEstimationInterface(num_nodes=num_nodes, num_samples=num_frames, seed=seed)
-    timestamps = mock_interface.get_timestamps()
+    # Default timestamps
+    if timestamps is None:
+        timestamps = np.linspace(0.0, 1.0, num_frames)
 
-    _add_pose_estimation_to_module(pose_module, camera_names, mock_interface, timestamps)
+    # Create a PoseEstimation container for each camera
+    frame_indices = np.arange(num_frames)
+    circle_x = video_width * (0.2 + 0.6 * frame_indices / num_frames)
+    circle_y = np.full(num_frames, video_height / 2)
+    noise_scale = max(1, int(video_width * 0.01))
+    for camera_name in camera_names:
+        # Create PoseEstimationSeries for each keypoint
+        pose_series_list = []
+        for idx, keypoint_name in enumerate(keypoint_names):
+            # Generate synthetic pose data tracking the moving circle in synthetic_video.py
+            x_offset = idx * int(video_width * 0.05)
+            y_offset = idx * int(video_height * 0.05)
+            x_coords = circle_x + x_offset + np.random.randn(num_frames) * noise_scale
+            y_coords = circle_y + y_offset + np.random.randn(num_frames) * noise_scale
+            data = np.column_stack([x_coords, y_coords])
+
+            series = PoseEstimationSeries(
+                name=f"{keypoint_name}PoseEstimationSeries",
+                data=data,
+                unit="pixels",
+                reference_frame="top-left corner",
+                timestamps=timestamps,
+                confidence=np.random.rand(num_frames),
+            )
+            pose_series_list.append(series)
+
+        # Create PoseEstimation container for this camera
+        pose_estimation = PoseEstimation(
+            name=camera_name,
+            pose_estimation_series=pose_series_list,
+            description=f"Pose estimation for {camera_name}",
+            dimensions=np.array([[video_width, video_height]], dtype="uint16"),
+        )
+        pose_module.add(pose_estimation)
 
     return nwbfile
 
@@ -141,14 +137,13 @@ def create_nwbfile_with_pose_estimation(
 def create_nwbfile_with_videos_and_pose(
     video_paths: dict[str, Path],
     camera_names: list[str],
-    num_nodes: int = 3,
+    keypoint_names: list[str],
     num_frames: int = 30,
     timestamps: dict[str, np.ndarray] | None = None,
-    seed: int = 0,
+    video_width: int = 160,
+    video_height: int = 120,
 ) -> NWBFile:
     """Create an NWBFile with both external videos and pose estimation.
-
-    Uses NeuroConv's MockPoseEstimationInterface for synthetic pose data generation.
 
     Parameters
     ----------
@@ -156,14 +151,16 @@ def create_nwbfile_with_videos_and_pose(
         Mapping of video names to file paths
     camera_names : list[str]
         Names of cameras for pose estimation (should match video names pattern)
-    num_nodes : int, optional
-        Number of keypoint nodes per camera, by default 3
+    keypoint_names : list[str]
+        Names of keypoints to track
     num_frames : int, optional
         Number of frames of pose data, by default 30
     timestamps : dict[str, np.ndarray], optional
         Mapping of video names to timestamp arrays. If None, uses rate-based.
-    seed : int, optional
-        Random seed for reproducible data generation, by default 0
+    video_width : int, optional
+        Width of the source video in pixels, by default 160
+    video_height : int, optional
+        Height of the source video in pixels, by default 120
 
     Returns
     -------
@@ -201,15 +198,46 @@ def create_nwbfile_with_videos_and_pose(
     )
     nwbfile.add_processing_module(pose_module)
 
-    # Use first video's timestamps if provided, otherwise use mock's timestamps
+    # Use first video's timestamps if available
+    pose_timestamps = None
     if timestamps:
-        pose_timestamps = next(iter(timestamps.values()))
+        first_video = next(iter(timestamps.values()))
+        pose_timestamps = first_video
     else:
-        mock_interface = MockPoseEstimationInterface(num_nodes=num_nodes, num_samples=num_frames, seed=seed)
-        pose_timestamps = mock_interface.get_timestamps()
+        pose_timestamps = np.linspace(0.0, 1.0, num_frames)
 
-    mock_interface = MockPoseEstimationInterface(num_nodes=num_nodes, num_samples=len(pose_timestamps), seed=seed)
+    # Create pose estimation for each camera
+    n = len(pose_timestamps)
+    frame_indices = np.arange(n)
+    circle_x = video_width * (0.2 + 0.6 * frame_indices / n)
+    circle_y = np.full(n, video_height / 2)
+    noise_scale = max(1, int(video_width * 0.01))
+    for camera_name in camera_names:
+        pose_series_list = []
+        for idx, keypoint_name in enumerate(keypoint_names):
+            # Generate synthetic pose data tracking the moving circle in synthetic_video.py
+            x_offset = idx * int(video_width * 0.05)
+            y_offset = idx * int(video_height * 0.05)
+            x_coords = circle_x + x_offset + np.random.randn(n) * noise_scale
+            y_coords = circle_y + y_offset + np.random.randn(n) * noise_scale
+            data = np.column_stack([x_coords, y_coords])
 
-    _add_pose_estimation_to_module(pose_module, camera_names, mock_interface, pose_timestamps)
+            series = PoseEstimationSeries(
+                name=f"{keypoint_name}PoseEstimationSeries",
+                data=data,
+                unit="pixels",
+                reference_frame="top-left corner",
+                timestamps=pose_timestamps,
+                confidence=np.random.rand(len(pose_timestamps)),
+            )
+            pose_series_list.append(series)
+
+        pose_estimation = PoseEstimation(
+            name=camera_name,
+            pose_estimation_series=pose_series_list,
+            description=f"Pose estimation for {camera_name}",
+            dimensions=np.array([[video_width, video_height]], dtype="uint16"),
+        )
+        pose_module.add(pose_estimation)
 
     return nwbfile
