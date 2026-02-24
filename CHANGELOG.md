@@ -4,9 +4,16 @@
 
 ## Bug Fixes
 
+* Fixed embargoed dandiset support by using `asset.client` instead of creating a new unauthenticated `DandiAPIClient()`, and by preserving pre-signed S3 query parameters (`strip_query=False`). [PR #18](https://github.com/catalystneuro/nwb-video-widgets/pull/18)
+
 ## Features
 
+* Added codec validation for local video and pose widgets. Videos using codecs not supported by browsers (e.g. MJPEG, mp4v, FFV1) now raise a clear `ValueError` with the detected codec and an ffmpeg command to re-encode to H.264. Detection is pure Python with no new dependencies. [PR #24](https://github.com/catalystneuro/nwb-video-widgets/pull/24)
+
 ## Improvements
+
+* Replaced OpenCV-generated synthetic test videos with committed stub videos from DANDI (H.264, MJPEG, mp4v) at 160x120 resolution. [PR #24](https://github.com/catalystneuro/nwb-video-widgets/pull/24)
+* Added comprehensive unit tests for PoseEstimation widgets covering discovery, widget creation, lazy loading, keypoint colors, error handling, and video mapping. [PR #16](https://github.com/catalystneuro/nwb-video-widgets/pull/16)
 
 # v0.1.5 (2026-02-03)
 

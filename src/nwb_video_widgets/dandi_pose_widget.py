@@ -237,7 +237,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         import remfile
         from pynwb import NWBHDF5IO
 
-        s3_url = asset.get_content_url(follow_redirects=1, strip_query=True)
+        s3_url = asset.get_content_url(follow_redirects=1, strip_query=False)
 
         remote_file = remfile.File(s3_url)
         h5_file = h5py.File(remote_file, "r")
@@ -275,10 +275,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         asset: RemoteAsset,
     ) -> dict[str, str]:
         """Extract video S3 URLs from NWB file using DANDI API."""
-        from dandi.dandiapi import DandiAPIClient
-
-        client = DandiAPIClient()
-        dandiset = client.get_dandiset(asset.dandiset_id, asset.version_id)
+        dandiset = asset.client.get_dandiset(asset.dandiset_id, asset.version_id)
 
         # Use PurePosixPath because DANDI paths always use forward slashes
         nwb_parent = PurePosixPath(asset.path).parent
@@ -291,7 +288,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
             video_asset = dandiset.get_asset_by_path(full_path)
             if video_asset is not None:
-                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
+                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=False)
 
         return video_urls
 
