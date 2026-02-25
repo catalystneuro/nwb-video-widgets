@@ -210,3 +210,6 @@ design_docs/drafts
 # Original large GIFs (use preprocessed versions instead)
 assets/pose_estimation..gif
 assets/video_widget.gif
+
+# MacOS
+.DS_Store

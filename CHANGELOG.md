@@ -8,6 +8,7 @@
 
 ## Features
 
+* Added local_example_notebook.ipynb and appropriate mock nwb file functions to demonstrate usage of the widgets in a local Jupyter environment without requiring DANDI access. [PR #21](https://github.com/catalystneuro/nwb-video-widgets/pull/21)
 * Added codec validation for local video and pose widgets. Videos using codecs not supported by browsers (e.g. MJPEG, mp4v, FFV1) now raise a clear `ValueError` with the detected codec and an ffmpeg command to re-encode to H.264. Detection is pure Python with no new dependencies. [PR #24](https://github.com/catalystneuro/nwb-video-widgets/pull/24)
 
 ## Improvements
