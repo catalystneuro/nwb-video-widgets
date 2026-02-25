@@ -136,6 +136,51 @@ def nwbfile_with_custom_module_pose(tmp_path):
 
 
 @pytest.fixture
+def nwbfile_with_rate_based_pose(tmp_path):
+    """Create an NWB file with pose estimation using starting_time and rate (no explicit timestamps)."""
+    nwbfile = create_nwbfile_with_pose_estimation(
+        camera_names=["LeftCamera"],
+        keypoint_names=["Nose", "LeftEar", "RightEar"],
+        num_frames=30,
+        starting_time=0.0,
+        rate=30.0,
+    )
+    nwb_path = tmp_path / "test_rate_pose.nwb"
+
+    with NWBHDF5IO(nwb_path, "w") as io:
+        io.write(nwbfile)
+
+    return read_nwb(nwb_path)
+
+
+@pytest.fixture
+def nwbfile_with_videos_and_rate_based_pose(tmp_path):
+    """Create an NWB file with videos and pose estimation using starting_time and rate."""
+    video_paths = {}
+    for name in ["VideoLeftCamera", "VideoBodyCamera", "VideoRightCamera"]:
+        video_path = tmp_path / f"{name}.mp4"
+        shutil.copy(STUB_H264_PATH, video_path)
+        video_paths[name] = video_path
+
+    camera_names = [name.replace("Video", "") for name in video_paths.keys()]
+
+    nwbfile = create_nwbfile_with_videos_and_pose(
+        video_paths=video_paths,
+        camera_names=camera_names,
+        keypoint_names=["Nose", "LeftEar", "RightEar"],
+        num_frames=30,
+        pose_starting_time=0.0,
+        pose_rate=30.0,
+    )
+    nwb_path = tmp_path / "test_combined_rate.nwb"
+
+    with NWBHDF5IO(nwb_path, "w") as io:
+        io.write(nwbfile)
+
+    return read_nwb(nwb_path)
+
+
+@pytest.fixture
 def nwbfile_with_videos_and_pose(tmp_path):
     """Create an NWB file with both videos and pose estimation."""
     video_paths = {}
