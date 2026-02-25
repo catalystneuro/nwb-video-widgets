@@ -61,7 +61,7 @@ class TestLazyLoading:
         assert widget.loading is False
 
     def test_data_loads_on_selection(self, nwbfile_with_single_camera_pose):
-        """Test that pose data loads when camera is selected."""
+        """Test that pose metadata loads when camera is selected."""
         widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
 
         # Initially empty
@@ -75,17 +75,17 @@ class TestLazyLoading:
         camera_data = widget.all_camera_data["LeftCamera"]
 
         assert "keypoint_metadata" in camera_data
-        assert "pose_coordinates" in camera_data
-        assert "timestamps" in camera_data
+        assert "n_frames" in camera_data
+        assert "start_time" in camera_data
+        assert "end_time" in camera_data
 
         # Check keypoints
         assert "Nose" in camera_data["keypoint_metadata"]
         assert "LeftEar" in camera_data["keypoint_metadata"]
         assert "RightEar" in camera_data["keypoint_metadata"]
 
-        # Check coordinates structure
-        assert len(camera_data["pose_coordinates"]["Nose"]) == 30
-        assert len(camera_data["timestamps"]) == 30
+        # Check summary stats
+        assert camera_data["n_frames"] == 30
 
 
 class TestKeypointColors:
@@ -212,8 +212,7 @@ class TestRateBasedTimestamps:
         widget = NWBLocalPoseEstimationWidget(nwbfile_with_rate_based_pose)
         widget.selected_camera = "LeftCamera"
         data = widget.all_camera_data["LeftCamera"]
-        assert data["timestamps"] is not None
-        assert len(data["timestamps"]) == 30
+        assert data["n_frames"] == 30
 
 
 class TestVideoNameMapping:

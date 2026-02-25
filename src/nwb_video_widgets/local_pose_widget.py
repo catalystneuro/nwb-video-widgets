@@ -96,6 +96,11 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     # Loading state for progress indicator
     loading = traitlets.Bool(False).tag(sync=True)
 
+    # Per-frame lazy loading: JS → Python request, Python → JS response
+    request_time = traitlets.Float(-1.0).tag(sync=True)
+    frame_keypoints = traitlets.Dict({}).tag(sync=True)
+    current_frame_time = traitlets.Float(-1.0).tag(sync=True)
+
     show_labels = traitlets.Bool(True).tag(sync=True)
     visible_keypoints = traitlets.Dict({}).tag(sync=True)
 
@@ -153,6 +158,8 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         self._pose_containers = pose_containers
         self._cmap = plt.get_cmap(colormap_name)
         self._custom_colors = custom_colors
+        self._current_series_map = {}
+        self._current_timestamps = None
 
         super().__init__(
             selected_camera=selected_camera,
@@ -165,12 +172,15 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             all_camera_data={},  # Start empty, load lazily
             visible_keypoints={},  # Populated as cameras are loaded
             settings_open=True,
+            request_time=-1.0,
+            frame_keypoints={},
+            current_frame_time=-1.0,
             **kwargs,
         )
 
     @traitlets.observe("selected_camera")
     def _on_camera_selected(self, change):
-        """Load pose data lazily when a camera is selected."""
+        """Load pose metadata lazily when a camera is selected."""
         camera_name = change["new"]
         if not camera_name or camera_name in self.all_camera_data:
             return  # Already loaded or no camera selected
@@ -179,10 +189,21 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         self.loading = True
 
         try:
-            # Load pose data for this camera
-            camera_data = self._load_camera_pose_data(
-                self._pose_containers, camera_name, self._cmap, self._custom_colors
-            )
+            # Store HDF5 series references for per-frame access
+            camera_pose = self._pose_containers[camera_name]
+            self._current_series_map = {
+                name.replace("PoseEstimationSeries", ""): series
+                for name, series in camera_pose.pose_estimation_series.items()
+            }
+            self._current_timestamps = None
+
+            # Load metadata only (no coordinate data)
+            camera_data = self._load_camera_metadata(camera_name)
+
+            # Reset stale per-frame state
+            self.frame_keypoints = {}
+            self.request_time = -1.0
+            self.current_frame_time = -1.0
 
             # Update all_camera_data (must create new dict for traitlets to detect change)
             self.all_camera_data = {**self.all_camera_data, camera_name: camera_data}
@@ -197,6 +218,31 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         finally:
             # Signal loading complete
             self.loading = False
+
+    @traitlets.observe("request_time")
+    def _on_frame_requested(self, change):
+        """Fetch keypoints for a single frame when JS requests a video time."""
+        video_time = change["new"]
+        if video_time < 0 or self._current_timestamps is None:
+            return
+
+        nwb_time = self._current_timestamps[0] + video_time
+        frame_idx = int(np.searchsorted(self._current_timestamps, nwb_time))
+        frame_idx = min(frame_idx, len(self._current_timestamps) - 1)
+
+        keypoints = {}
+        for name, series in self._current_series_map.items():
+            try:
+                xy = series.data[frame_idx]
+                if not np.isnan(xy[0]) and not np.isnan(xy[1]):
+                    keypoints[name] = [float(xy[0]), float(xy[1])]
+                else:
+                    keypoints[name] = None
+            except Exception:
+                keypoints[name] = None
+
+        self.frame_keypoints = keypoints
+        self.current_frame_time = float(self._current_timestamps[frame_idx])
 
     @staticmethod
     def _get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
@@ -274,54 +320,45 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
 
         return video_urls
 
-    @staticmethod
-    def _load_camera_pose_data(pose_containers: dict, camera_name: str, cmap, custom_colors: dict) -> dict:
-        """Load pose data for a single camera.
+    def _load_camera_metadata(self, camera_name: str) -> dict:
+        """Load keypoint metadata for a single camera (no coordinate data).
+
+        Stores timestamps in ``self._current_timestamps`` for per-frame lookup.
 
         Returns a dict with:
         - keypoint_metadata: {name: {color, label}}
-        - pose_coordinates: {name: [[x, y], ...]} as JSON-serializable lists
-        - timestamps: [t0, t1, ...] as JSON-serializable list
+        - n_frames: total number of frames
+        - start_time: first timestamp in seconds
+        - end_time: last timestamp in seconds
         """
-        camera_pose = pose_containers[camera_name]
+        camera_pose = self._pose_containers[camera_name]
 
         keypoint_names = list(camera_pose.pose_estimation_series.keys())
         n_kp = len(keypoint_names)
 
         metadata = {}
-        coordinates = {}
-        timestamps = None
 
         for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
-            # Get coordinates - iterate to build list without memory duplication
-            data = series.data[:]
-            coords_list = []
-            for x, y in data:
-                if np.isnan(x) or np.isnan(y):
-                    coords_list.append(None)
-                else:
-                    coords_list.append([float(x), float(y)])
-            coordinates[short_name] = coords_list
+            if self._current_timestamps is None:
+                self._current_timestamps = series.get_timestamps()[:]
 
-            if timestamps is None:
-                timestamps = series.get_timestamps()[:].tolist()
-
-            # Assign color from custom dict or colormap
-            if short_name in custom_colors:
-                color = custom_colors[short_name]
+            if short_name in self._custom_colors:
+                color = self._custom_colors[short_name]
             else:
-                if hasattr(cmap, "N") and cmap.N < 256:
-                    rgba = cmap(index % cmap.N)
+                if hasattr(self._cmap, "N") and self._cmap.N < 256:
+                    rgba = self._cmap(index % self._cmap.N)
                 else:
-                    rgba = cmap(index / max(n_kp - 1, 1))
+                    rgba = self._cmap(index / max(n_kp - 1, 1))
                 color = mcolors.to_hex(rgba)
 
             metadata[short_name] = {"color": color, "label": short_name}
 
+        timestamps = self._current_timestamps
         return {
             "keypoint_metadata": metadata,
-            "pose_coordinates": coordinates,
-            "timestamps": timestamps,
+            "n_frames": int(len(timestamps)),
+            "start_time": float(timestamps[0]),
+            "end_time": float(timestamps[-1]),
         }

@@ -3,9 +3,9 @@
  * Overlays keypoints on streaming video with pose estimation selection.
  *
  * Data format (from Python via JSON):
- * - all_camera_data: {pose_name: {keypoint_metadata, pose_coordinates, timestamps}}
- * - pose_coordinates: {keypoint_name: [[x, y], null, [x, y], ...]}
- * - timestamps: [t0, t1, t2, ...] array of frame timestamps
+ * - all_camera_data: {pose_name: {keypoint_metadata, n_frames, start_time, end_time}}
+ * - frame_keypoints: {keypoint_name: [x, y] | null} — current frame, updated per request_time
+ * - current_frame_time: float — NWB timestamp of the current frame
  */
 
 const DISPLAY_WIDTH = 640;
@@ -19,24 +19,6 @@ function formatTime(seconds) {
   const secs = Math.floor(seconds % 60);
   const ms = Math.floor((seconds % 1) * 10);
   return mins + ":" + secs.toString().padStart(2, "0") + "." + ms;
-}
-
-/**
- * Binary search for frame index closest to target time.
- */
-function findFrameIndex(timestamps, targetTime) {
-  if (!timestamps || timestamps.length === 0) return 0;
-  let left = 0;
-  let right = timestamps.length - 1;
-  while (left < right) {
-    const mid = Math.floor((left + right) / 2);
-    if (timestamps[mid] < targetTime) {
-      left = mid + 1;
-    } else {
-      right = mid;
-    }
-  }
-  return left;
 }
 
 /**
@@ -322,6 +304,7 @@ function render({ model, el }) {
   let isPlaying = false;
   let animationId = null;
   let visibleKeypoints = { ...model.get("visible_keypoints") };
+  let lastRequestedTime = -1;
 
   // ============ FUNCTIONS ============
 
@@ -331,16 +314,26 @@ function render({ model, el }) {
     return allData[camera] || null;
   }
 
-  function updateTimeLabel(frameIdx) {
+  function updateTimeLabel() {
     const data = getCurrentCameraData();
-    const timestamps = data?.timestamps;
-    if (!timestamps || timestamps.length === 0) {
+    const currentFrameTime = model.get("current_frame_time");
+    const endTime = data?.end_time;
+    if (currentFrameTime < 0 || !endTime) {
       timeLabel.textContent = "0:00.0 / 0:00.0";
       return;
     }
-    const currentTime = timestamps[frameIdx] || timestamps[0];
-    const endTime = timestamps[timestamps.length - 1];
-    timeLabel.textContent = formatTime(currentTime) + " / " + formatTime(endTime);
+    timeLabel.textContent = formatTime(currentFrameTime) + " / " + formatTime(endTime);
+  }
+
+  function requestCurrentFrame() {
+    const data = getCurrentCameraData();
+    if (!data || video.readyState === 0) return;
+    const t = video.currentTime;
+    if (t !== lastRequestedTime) {
+      lastRequestedTime = t;
+      model.set("request_time", t);
+      model.save_changes();
+    }
   }
 
   function updatePoseList() {
@@ -564,13 +557,6 @@ function render({ model, el }) {
     updateToggleStyles();
   }
 
-  function getFrameIndex() {
-    const data = getCurrentCameraData();
-    const timestamps = data?.timestamps;
-    if (!timestamps || timestamps.length === 0) return 0;
-    return findFrameIndex(timestamps, timestamps[0] + video.currentTime);
-  }
-
   function drawPose() {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -582,28 +568,23 @@ function render({ model, el }) {
     if (!data) return;
 
     const metadata = data.keypoint_metadata;
-    const coordinates = data.pose_coordinates;
-    const timestamps = data.timestamps;
+    const frameKeypoints = model.get("frame_keypoints") || {};
     const showLabels = model.get("show_labels");
 
-    if (!coordinates || !timestamps || timestamps.length === 0) return;
-
-    const frameIdx = getFrameIndex();
-
+    if (!metadata || Object.keys(metadata).length === 0) return;
     if (!video.videoWidth || !video.videoHeight) return;
 
     const scaleX = DISPLAY_WIDTH / video.videoWidth;
     const scaleY = DISPLAY_HEIGHT / video.videoHeight;
 
-    for (const [name, coords] of Object.entries(coordinates)) {
+    for (const [name, kp] of Object.entries(metadata)) {
       if (visibleKeypoints[name] === false) continue;
 
-      const coord = coords[frameIdx];
+      const coord = frameKeypoints[name];
       if (!coord) continue;
 
       const x = coord[0] * scaleX;
       const y = coord[1] * scaleY;
-      const kp = metadata[name];
 
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, 2 * Math.PI);
@@ -622,7 +603,7 @@ function render({ model, el }) {
         ctx.fillText(kp.label, x + 6, y + 3);
       }
     }
-    updateTimeLabel(frameIdx);
+    updateTimeLabel();
   }
 
   function animate() {
@@ -674,7 +655,7 @@ function render({ model, el }) {
 
   function switchCamera() {
     const data = getCurrentCameraData();
-    seekBar.max = data?.timestamps?.length - 1 || 100;
+    seekBar.max = data?.n_frames - 1 || 100;
     createKeypointToggles();
     loadVideo();
     drawPose();
@@ -688,15 +669,15 @@ function render({ model, el }) {
   loadVideo();
 
   const initialData = getCurrentCameraData();
-  if (initialData?.timestamps) {
-    seekBar.max = initialData.timestamps.length - 1;
+  if (initialData?.n_frames) {
+    seekBar.max = initialData.n_frames - 1;
   }
 
   // ============ EVENT LISTENERS ============
 
-  video.addEventListener("loadedmetadata", drawPose);
-  video.addEventListener("seeked", drawPose);
-  video.addEventListener("timeupdate", drawPose);
+  video.addEventListener("loadedmetadata", () => { drawPose(); requestCurrentFrame(); });
+  video.addEventListener("seeked", () => { drawPose(); requestCurrentFrame(); });
+  video.addEventListener("timeupdate", () => { drawPose(); requestCurrentFrame(); });
 
   model.on("change:selected_camera", () => {
     if (isPlaying) {
@@ -705,6 +686,7 @@ function render({ model, el }) {
       if (animationId) cancelAnimationFrame(animationId);
       isPlaying = false;
     }
+    lastRequestedTime = -1;
     updatePoseList();
     updateVideoSelect();
     switchCamera();
@@ -725,11 +707,12 @@ function render({ model, el }) {
 
     // Update seek bar max when camera data loads
     const data = getCurrentCameraData();
-    if (data?.timestamps?.length) {
-      seekBar.max = data.timestamps.length - 1;
+    if (data?.n_frames) {
+      seekBar.max = data.n_frames - 1;
     }
 
     drawPose();
+    requestCurrentFrame();
   });
 
   model.on("change:visible_keypoints", () => {
@@ -737,6 +720,9 @@ function render({ model, el }) {
     updateToggleStyles();
     drawPose();
   });
+
+  model.on("change:frame_keypoints", drawPose);
+  model.on("change:current_frame_time", updateTimeLabel);
 
   model.on("change:loading", updateLoadingState);
 
@@ -775,9 +761,8 @@ function render({ model, el }) {
   seekBar.addEventListener("input", () => {
     const frameIdx = parseInt(seekBar.value);
     const data = getCurrentCameraData();
-    const timestamps = data?.timestamps;
-    if (timestamps && timestamps.length > 0) {
-      video.currentTime = timestamps[frameIdx] - timestamps[0];
+    if (data && data.n_frames > 1) {
+      video.currentTime = frameIdx * (data.end_time - data.start_time) / (data.n_frames - 1);
     }
   });
 
