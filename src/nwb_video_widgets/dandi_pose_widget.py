@@ -324,7 +324,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
             coordinates[short_name] = coords_list
 
             if timestamps is None:
-                timestamps = series.timestamps[:].tolist()
+                timestamps = series.get_timestamps()[:].tolist()
 
             # Assign color from custom dict or colormap
             if short_name in custom_colors:

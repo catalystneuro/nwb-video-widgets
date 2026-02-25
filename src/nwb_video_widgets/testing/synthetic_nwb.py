@@ -58,6 +58,8 @@ def create_nwbfile_with_pose_estimation(
     keypoint_names: list[str],
     num_frames: int = 30,
     timestamps: np.ndarray | None = None,
+    starting_time: float | None = None,
+    rate: float | None = None,
     video_width: int = 160,
     video_height: int = 120,
     processing_module_name: str = "pose_estimation",
@@ -73,7 +75,12 @@ def create_nwbfile_with_pose_estimation(
     num_frames : int, optional
         Number of frames of pose data, by default 30
     timestamps : np.ndarray, optional
-        Timestamps for the pose data. If None, uses evenly spaced from 0 to 1.
+        Timestamps for the pose data. If None and starting_time/rate are not provided,
+        uses evenly spaced from 0 to 1.
+    starting_time : float, optional
+        Start time in seconds. Used with rate for rate-based timing (no explicit timestamps).
+    rate : float, optional
+        Sampling rate in Hz. Used with starting_time for rate-based timing.
     video_width : int, optional
         Width of the source video in pixels, by default 160
     video_height : int, optional
@@ -95,8 +102,10 @@ def create_nwbfile_with_pose_estimation(
     )
     nwbfile.add_processing_module(pose_module)
 
-    # Default timestamps
-    if timestamps is None:
+    use_rate = starting_time is not None and rate is not None
+
+    # Default timestamps (only used when not rate-based)
+    if not use_rate and timestamps is None:
         timestamps = np.linspace(0.0, 1.0, num_frames)
 
     # Create a PoseEstimation container for each camera
@@ -115,14 +124,25 @@ def create_nwbfile_with_pose_estimation(
             y_coords = circle_y + y_offset + np.random.randn(num_frames) * noise_scale
             data = np.column_stack([x_coords, y_coords])
 
-            series = PoseEstimationSeries(
-                name=f"{keypoint_name}PoseEstimationSeries",
-                data=data,
-                unit="pixels",
-                reference_frame="top-left corner",
-                timestamps=timestamps,
-                confidence=np.random.rand(num_frames),
-            )
+            if use_rate:
+                series = PoseEstimationSeries(
+                    name=f"{keypoint_name}PoseEstimationSeries",
+                    data=data,
+                    unit="pixels",
+                    reference_frame="top-left corner",
+                    starting_time=starting_time,
+                    rate=rate,
+                    confidence=np.random.rand(num_frames),
+                )
+            else:
+                series = PoseEstimationSeries(
+                    name=f"{keypoint_name}PoseEstimationSeries",
+                    data=data,
+                    unit="pixels",
+                    reference_frame="top-left corner",
+                    timestamps=timestamps,
+                    confidence=np.random.rand(num_frames),
+                )
             pose_series_list.append(series)
 
         # Create PoseEstimation container for this camera
@@ -143,6 +163,8 @@ def create_nwbfile_with_videos_and_pose(
     keypoint_names: list[str],
     num_frames: int = 30,
     timestamps: dict[str, np.ndarray] | None = None,
+    pose_starting_time: float | None = None,
+    pose_rate: float | None = None,
     video_width: int = 160,
     video_height: int = 120,
 ) -> NWBFile:
@@ -159,7 +181,12 @@ def create_nwbfile_with_videos_and_pose(
     num_frames : int, optional
         Number of frames of pose data, by default 30
     timestamps : dict[str, np.ndarray], optional
-        Mapping of video names to timestamp arrays. If None, uses rate-based.
+        Mapping of video names to timestamp arrays. If None, uses rate-based for videos.
+    pose_starting_time : float, optional
+        Start time in seconds for pose estimation series. Used with pose_rate for
+        rate-based timing (no explicit timestamps).
+    pose_rate : float, optional
+        Sampling rate in Hz for pose estimation series. Used with pose_starting_time.
     video_width : int, optional
         Width of the source video in pixels, by default 160
     video_height : int, optional
@@ -201,16 +228,19 @@ def create_nwbfile_with_videos_and_pose(
     )
     nwbfile.add_processing_module(pose_module)
 
-    # Use first video's timestamps if available
+    use_rate = pose_starting_time is not None and pose_rate is not None
+
+    # Determine pose timestamps (only used when not rate-based)
     pose_timestamps = None
-    if timestamps:
-        first_video = next(iter(timestamps.values()))
-        pose_timestamps = first_video
-    else:
-        pose_timestamps = np.linspace(0.0, 1.0, num_frames)
+    if not use_rate:
+        if timestamps:
+            first_video = next(iter(timestamps.values()))
+            pose_timestamps = first_video
+        else:
+            pose_timestamps = np.linspace(0.0, 1.0, num_frames)
 
     # Create pose estimation for each camera
-    n = len(pose_timestamps)
+    n = num_frames if use_rate else len(pose_timestamps)
     frame_indices = np.arange(n)
     circle_x = video_width * (0.2 + 0.6 * frame_indices / n)
     circle_y = np.full(n, video_height / 2)
@@ -225,14 +255,25 @@ def create_nwbfile_with_videos_and_pose(
             y_coords = circle_y + y_offset + np.random.randn(n) * noise_scale
             data = np.column_stack([x_coords, y_coords])
 
-            series = PoseEstimationSeries(
-                name=f"{keypoint_name}PoseEstimationSeries",
-                data=data,
-                unit="pixels",
-                reference_frame="top-left corner",
-                timestamps=pose_timestamps,
-                confidence=np.random.rand(len(pose_timestamps)),
-            )
+            if use_rate:
+                series = PoseEstimationSeries(
+                    name=f"{keypoint_name}PoseEstimationSeries",
+                    data=data,
+                    unit="pixels",
+                    reference_frame="top-left corner",
+                    starting_time=pose_starting_time,
+                    rate=pose_rate,
+                    confidence=np.random.rand(n),
+                )
+            else:
+                series = PoseEstimationSeries(
+                    name=f"{keypoint_name}PoseEstimationSeries",
+                    data=data,
+                    unit="pixels",
+                    reference_frame="top-left corner",
+                    timestamps=pose_timestamps,
+                    confidence=np.random.rand(len(pose_timestamps)),
+                )
             pose_series_list.append(series)
 
         pose_estimation = PoseEstimation(

@@ -204,6 +204,18 @@ class TestProcessingModuleLocation:
         assert "RightCamera" in widget.available_cameras
 
 
+class TestRateBasedTimestamps:
+    """Regression tests for PoseEstimationSeries with starting_time and rate."""
+
+    def test_widget_with_rate_based_timestamps(self, nwbfile_with_rate_based_pose):
+        """Widget should handle PoseEstimationSeries with starting_time and rate (not timestamps)."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_rate_based_pose)
+        widget.selected_camera = "LeftCamera"
+        data = widget.all_camera_data["LeftCamera"]
+        assert data["timestamps"] is not None
+        assert len(data["timestamps"]) == 30
+
+
 class TestVideoNameMapping:
     """Tests for video name to URL mapping."""
 
