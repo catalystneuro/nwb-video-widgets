@@ -18,6 +18,7 @@
 * Added support for Pose Estimation Objects anywhere in the NWB file [PR #17](https://github.com/catalystneuro/nwb-video-widgets/pull/17)
 * Updated readme to describe supported video codecs [PR #25](https://github.com/catalystneuro/nwb-video-widgets/pull/25)
 * Added support for starting time and rate [PR #27](https://github.com/catalystneuro/nwb-video-widgets/pull/27)
+* Load pose estimation data lazily [PR #31](https://github.com/catalystneuro/nwb-video-widgets/pull/31)
 
 # v0.1.5 (2026-02-03)
 
