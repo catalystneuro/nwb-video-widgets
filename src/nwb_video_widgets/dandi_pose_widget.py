@@ -320,14 +320,12 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
-            # Get coordinates - iterate to build list without memory duplication
+            # Bulk C-level conversion via tolist(), then replace sparse NaN rows with None.
             data = series.data[:]
-            coords_list = []
-            for x, y in data:
-                if np.isnan(x) or np.isnan(y):
-                    coords_list.append(None)
-                else:
-                    coords_list.append([float(x), float(y)])
+            nan_mask = np.isnan(data).any(axis=1)
+            coords_list = data.tolist()
+            for nan_index in np.flatnonzero(nan_mask):
+                coords_list[nan_index] = None
             coordinates[short_name] = coords_list
 
             if timestamps is None:
