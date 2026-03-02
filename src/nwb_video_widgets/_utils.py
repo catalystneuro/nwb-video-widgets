@@ -244,6 +244,10 @@ def get_video_timestamps(nwbfile: NWBFile) -> dict[str, list[float]]:
 def get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
     """Extract video time range information from all ImageSeries in an NWB file.
 
+    Uses indexed access (timestamps[0], timestamps[-1]) instead of loading
+    the full timestamps array, which is important for DANDI streaming where
+    each slice triggers HTTP range requests.
+
     Parameters
     ----------
     nwbfile : NWBFile
@@ -255,32 +259,26 @@ def get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
         Mapping of video names to info dictionaries with keys:
         - start: float, start time in seconds
         - end: float, end time in seconds
-        - frames: int, number of frames
     """
     video_series = discover_video_series(nwbfile)
     info = {}
 
     for name, series in video_series.items():
-        if series.timestamps is not None:
-            timestamps = series.timestamps[:]
-            start = float(timestamps[0])
-            end = float(timestamps[-1])
-            frames = len(timestamps)
+        if series.timestamps is not None and len(series.timestamps) > 0:
+            start = float(series.timestamps[0])
+            end = float(series.timestamps[-1])
         elif series.starting_time is not None:
             start = float(series.starting_time)
             # Without timestamps, we can't determine end time accurately
             # Use starting_time as both start and end
             end = start
-            frames = 1
         else:
             start = 0.0
             end = 0.0
-            frames = 1
 
         info[name] = {
             "start": start,
             "end": end,
-            "frames": frames,
         }
 
     return info
@@ -471,7 +469,6 @@ def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:
         Mapping of camera names to info dictionaries with keys:
         - start: float, start time in seconds
         - end: float, end time in seconds
-        - frames: int, number of frames
         - keypoints: list[str], names of keypoints
     """
     cameras = discover_pose_estimation_cameras(nwbfile)
@@ -483,22 +480,20 @@ def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:
             name.replace("PoseEstimationSeries", "") for name in pose_estimation.pose_estimation_series.keys()
         ]
 
-        # Get timestamps from the first pose estimation series
+        # Get start/end times from the first pose estimation series using indexed
+        # access to avoid loading the full timestamps array into memory. This is
+        # important for DANDI streaming where each slice triggers HTTP range requests.
         first_series = next(iter(pose_estimation.pose_estimation_series.values()), None)
         if first_series is not None and first_series.timestamps is not None:
-            timestamps = first_series.timestamps[:]
-            start = float(timestamps[0])
-            end = float(timestamps[-1])
-            frames = len(timestamps)
+            start = float(first_series.timestamps[0])
+            end = float(first_series.timestamps[-1])
         else:
             start = 0.0
             end = 0.0
-            frames = 0
 
         info[camera_name] = {
             "start": start,
             "end": end,
-            "frames": frames,
             "keypoints": keypoint_names,
         }
 
