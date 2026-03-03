@@ -18,6 +18,8 @@
 * Added support for Pose Estimation Objects anywhere in the NWB file [PR #17](https://github.com/catalystneuro/nwb-video-widgets/pull/17)
 * Updated readme to describe supported video codecs [PR #25](https://github.com/catalystneuro/nwb-video-widgets/pull/25)
 * Added support for starting time and rate [PR #27](https://github.com/catalystneuro/nwb-video-widgets/pull/27)
+* Optimized init-time metadata loading to use indexed timestamp access instead of loading full arrays, improving widget creation speed for DANDI streaming with large datasets [PR #32](https://github.com/catalystneuro/nwb-video-widgets/pull/32)
+* Vectorized pose coordinate conversion from row-by-row Python loop to numpy bulk operations, reducing processing time for large datasets [PR #32](https://github.com/catalystneuro/nwb-video-widgets/pull/32)
 
 # v0.1.5 (2026-02-03)
 

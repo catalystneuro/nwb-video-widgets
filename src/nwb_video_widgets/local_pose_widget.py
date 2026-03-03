@@ -200,26 +200,33 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
 
     @staticmethod
     def _get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
-        """Get metadata for all video series."""
+        """Get metadata for all video series.
+
+        Uses indexed access (timestamps[0], timestamps[-1]) instead of loading
+        the full timestamps array, which is important for DANDI streaming where
+        each slice triggers HTTP range requests.
+        """
         video_series = discover_video_series(nwbfile)
         info = {}
 
         for name, series in video_series.items():
-            timestamps = None
-            if series.timestamps is not None:
-                timestamps = series.timestamps[:]
+            if series.timestamps is not None and len(series.timestamps) > 0:
+                info[name] = {
+                    "start": float(series.timestamps[0]),
+                    "end": float(series.timestamps[-1]),
+                }
             elif series.starting_time is not None and series.rate is not None:
                 n_frames = series.data.shape[0] if hasattr(series.data, "shape") else 0
-                timestamps = np.arange(n_frames) / series.rate + series.starting_time
-
-            if timestamps is not None and len(timestamps) > 0:
-                info[name] = {
-                    "start": float(timestamps[0]),
-                    "end": float(timestamps[-1]),
-                    "frames": len(timestamps),
-                }
+                if n_frames > 0:
+                    end = series.starting_time + (n_frames - 1) / series.rate
+                    info[name] = {
+                        "start": float(series.starting_time),
+                        "end": float(end),
+                    }
+                else:
+                    info[name] = {"start": 0, "end": 0}
             else:
-                info[name] = {"start": 0, "end": 0, "frames": 0}
+                info[name] = {"start": 0, "end": 0}
 
         return info
 
@@ -295,14 +302,12 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
-            # Get coordinates - iterate to build list without memory duplication
+            # Bulk C-level conversion via tolist(), then replace sparse NaN rows with None.
             data = series.data[:]
-            coords_list = []
-            for x, y in data:
-                if np.isnan(x) or np.isnan(y):
-                    coords_list.append(None)
-                else:
-                    coords_list.append([float(x), float(y)])
+            nan_mask = np.isnan(data).any(axis=1)
+            coords_list = data.tolist()
+            for nan_index in np.flatnonzero(nan_mask):
+                coords_list[nan_index] = None
             coordinates[short_name] = coords_list
 
             if timestamps is None:
