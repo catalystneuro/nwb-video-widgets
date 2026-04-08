@@ -16,6 +16,7 @@ from nwb_video_widgets._utils import (
     discover_video_series,
     get_pose_estimation_info,
     start_video_server,
+    validate_video_codec,
 )
 
 
@@ -25,7 +26,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     Overlays DeepLabCut keypoints on streaming video with support for
     camera selection via a settings panel.
 
-    This widget discovers PoseEstimation containers in processing['pose_estimation']
+    This widget discovers PoseEstimation containers anywhere in the NWB file
     and resolves video paths relative to the NWB file location. An interactive
     settings panel allows users to select which camera to display.
 
@@ -36,8 +37,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     Parameters
     ----------
     nwbfile : pynwb.NWBFile
-        NWB file containing pose estimation in processing['pose_estimation'].
-        Must have been loaded from disk.
+        NWB file containing pose estimation. Must have been loaded from disk.
     video_nwbfile : pynwb.NWBFile, optional
         NWB file containing video ImageSeries in acquisition. If not provided,
         videos are assumed to be in `nwbfile`. Use this when videos are in a
@@ -82,10 +82,9 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     available_cameras = traitlets.List([]).tag(sync=True)
     available_cameras_info = traitlets.Dict({}).tag(sync=True)
 
-    # Video selection - users explicitly match cameras to videos
-    available_videos = traitlets.List([]).tag(sync=True)
-    available_videos_info = traitlets.Dict({}).tag(sync=True)
-    video_name_to_url = traitlets.Dict({}).tag(sync=True)  # Video name -> URL mapping
+    # Video data - set by Python in __init__, read by JavaScript
+    _video_urls = traitlets.Dict({}).tag(sync=True)  # {name: url_string}
+    _video_timing = traitlets.Dict({}).tag(sync=True)  # {name: {start: float, end: float}}
     camera_to_video = traitlets.Dict({}).tag(sync=True)  # Camera -> video name mapping
 
     settings_open = traitlets.Bool(True).tag(sync=True)
@@ -124,27 +123,16 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             colormap_name = "tab10"
             custom_colors = keypoint_colors
 
-        # Get pose estimation container
-        if "pose_estimation" not in nwbfile.processing:
-            raise ValueError("NWB file does not contain pose_estimation processing module")
-        pose_estimation = nwbfile.processing["pose_estimation"]
-
-        # Get all PoseEstimation containers (excludes Skeletons and other metadata)
+        # Get all PoseEstimation containers (location-agnostic)
         pose_containers = discover_pose_estimation_cameras(nwbfile)
+        if not pose_containers:
+            raise ValueError("NWB file does not contain any PoseEstimation objects")
         available_cameras = list(pose_containers.keys())
 
         # Get camera info for settings panel display
         available_cameras_info = get_pose_estimation_info(nwbfile)
 
-        # Get ALL available videos (sorted alphabetically)
-        available_videos = sorted(video_urls.keys())
-        available_videos_info = self._get_video_info(video_source)
-
-        # Video name to URL mapping (sent to JS for URL resolution)
-        video_name_to_url = video_urls
-
-        # Start with empty mapping - users explicitly select videos
-        camera_to_video = {}
+        video_timing = self._get_video_info(video_source)
 
         # Select default camera - start with empty to show settings
         if default_camera and default_camera in available_cameras:
@@ -153,7 +141,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             selected_camera = ""
 
         # Store references for lazy loading (not synced to JS)
-        self._pose_estimation = pose_estimation
+        self._pose_containers = pose_containers
         self._cmap = plt.get_cmap(colormap_name)
         self._custom_colors = custom_colors
 
@@ -161,12 +149,11 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             selected_camera=selected_camera,
             available_cameras=available_cameras,
             available_cameras_info=available_cameras_info,
-            available_videos=available_videos,
-            available_videos_info=available_videos_info,
-            video_name_to_url=video_name_to_url,
-            camera_to_video=camera_to_video,
-            all_camera_data={},  # Start empty, load lazily
-            visible_keypoints={},  # Populated as cameras are loaded
+            _video_urls=video_urls,
+            _video_timing=video_timing,
+            camera_to_video={},
+            all_camera_data={},
+            visible_keypoints={},
             settings_open=True,
             **kwargs,
         )
@@ -184,7 +171,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         try:
             # Load pose data for this camera
             camera_data = self._load_camera_pose_data(
-                self._pose_estimation, camera_name, self._cmap, self._custom_colors
+                self._pose_containers, camera_name, self._cmap, self._custom_colors
             )
 
             # Update all_camera_data (must create new dict for traitlets to detect change)
@@ -203,26 +190,33 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
 
     @staticmethod
     def _get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
-        """Get metadata for all video series."""
+        """Get metadata for all video series.
+
+        Uses indexed access (timestamps[0], timestamps[-1]) instead of loading
+        the full timestamps array, which is important for DANDI streaming where
+        each slice triggers HTTP range requests.
+        """
         video_series = discover_video_series(nwbfile)
         info = {}
 
         for name, series in video_series.items():
-            timestamps = None
-            if series.timestamps is not None:
-                timestamps = series.timestamps[:]
+            if series.timestamps is not None and len(series.timestamps) > 0:
+                info[name] = {
+                    "start": float(series.timestamps[0]),
+                    "end": float(series.timestamps[-1]),
+                }
             elif series.starting_time is not None and series.rate is not None:
                 n_frames = series.data.shape[0] if hasattr(series.data, "shape") else 0
-                timestamps = np.arange(n_frames) / series.rate + series.starting_time
-
-            if timestamps is not None and len(timestamps) > 0:
-                info[name] = {
-                    "start": float(timestamps[0]),
-                    "end": float(timestamps[-1]),
-                    "frames": len(timestamps),
-                }
+                if n_frames > 0:
+                    end = series.starting_time + (n_frames - 1) / series.rate
+                    info[name] = {
+                        "start": float(series.starting_time),
+                        "end": float(end),
+                    }
+                else:
+                    info[name] = {"start": 0, "end": 0}
             else:
-                info[name] = {"start": 0, "end": 0, "frames": 0}
+                info[name] = {"start": 0, "end": 0}
 
         return info
 
@@ -253,11 +247,12 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         if not video_series:
             return video_urls
 
-        # Collect all video directories and start servers
+        # Validate codecs and collect all video directories
         video_dirs: set[Path] = set()
         for series in video_series.values():
             relative_path = series.external_file[0].lstrip("./")
             video_path = (base_dir / relative_path).resolve()
+            validate_video_codec(video_path)
             video_dirs.add(video_path.parent)
 
         # Start servers for each unique directory
@@ -277,7 +272,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         return video_urls
 
     @staticmethod
-    def _load_camera_pose_data(pose_estimation, camera_name: str, cmap, custom_colors: dict) -> dict:
+    def _load_camera_pose_data(pose_containers: dict, camera_name: str, cmap, custom_colors: dict) -> dict:
         """Load pose data for a single camera.
 
         Returns a dict with:
@@ -285,7 +280,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         - pose_coordinates: {name: [[x, y], ...]} as JSON-serializable lists
         - timestamps: [t0, t1, ...] as JSON-serializable list
         """
-        camera_pose = pose_estimation[camera_name]
+        camera_pose = pose_containers[camera_name]
 
         keypoint_names = list(camera_pose.pose_estimation_series.keys())
         n_kp = len(keypoint_names)
@@ -297,18 +292,16 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
-            # Get coordinates - iterate to build list without memory duplication
+            # Bulk C-level conversion via tolist(), then replace sparse NaN rows with None.
             data = series.data[:]
-            coords_list = []
-            for x, y in data:
-                if np.isnan(x) or np.isnan(y):
-                    coords_list.append(None)
-                else:
-                    coords_list.append([float(x), float(y)])
+            nan_mask = np.isnan(data).any(axis=1)
+            coords_list = data.tolist()
+            for nan_index in np.flatnonzero(nan_mask):
+                coords_list[nan_index] = None
             coordinates[short_name] = coords_list
 
             if timestamps is None:
-                timestamps = series.timestamps[:].tolist()
+                timestamps = series.get_timestamps()[:].tolist()
 
             # Assign color from custom dict or colormap
             if short_name in custom_colors:

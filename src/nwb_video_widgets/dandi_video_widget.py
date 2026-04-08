@@ -3,18 +3,11 @@
 from __future__ import annotations
 
 import pathlib
-from pathlib import PurePosixPath
+import warnings
 from typing import TYPE_CHECKING, Optional
 
 import anywidget
 import traitlets
-from pynwb import NWBFile
-
-from nwb_video_widgets._utils import (
-    discover_video_series,
-    get_video_info,
-    get_video_timestamps,
-)
 
 if TYPE_CHECKING:
     from dandi.dandiapi import RemoteAsset
@@ -23,19 +16,18 @@ if TYPE_CHECKING:
 class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     """Display videos from a DANDI-hosted NWB file with synchronized playback.
 
-    This widget discovers ImageSeries with external_file references in the NWB
-    file and resolves their paths to S3 URLs via the DANDI API. An interactive
-    settings panel allows users to select which videos to display and choose
-    between Row, Column, or Grid layouts.
+    Python injects seed traitlets extracted from the asset. JavaScript fetches
+    video metadata directly from DANDI via LINDI and the DANDI REST API,
+    then populates ``video_urls`` and ``video_timing``.
+
+    Both traitlets are bidirectional: once JavaScript fills them, the values
+    are synced back to Python automatically.
 
     Parameters
     ----------
     asset : RemoteAsset
         DANDI asset object (from dandiset.get_asset_by_path() or similar).
-        The dandiset_id and asset path are extracted from this object.
-    nwbfile : pynwb.NWBFile, optional
-        Pre-loaded NWB file to avoid re-loading. If not provided, the widget
-        will load the NWB file via streaming.
+        Seeds (NWB URL, asset ID, dandiset ID, etc.) are extracted from this.
     video_grid : list[list[str]], optional
         A 2D grid layout specifying which videos to display and where.
         Each inner list represents a row of videos. When provided, bypasses
@@ -56,13 +48,6 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     >>> widget = NWBDANDIVideoPlayer(asset=asset)
     >>> display(widget)
 
-    With pre-loaded NWB file (avoids re-loading):
-
-    >>> widget = NWBDANDIVideoPlayer(
-    ...     asset=asset,
-    ...     nwbfile=already_loaded_nwbfile,
-    ... )
-
     Fixed grid mode (single row):
 
     >>> widget = NWBDANDIVideoPlayer(
@@ -81,9 +66,24 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     ... )
     """
 
-    video_urls = traitlets.Dict({}).tag(sync=True)
-    video_timestamps = traitlets.Dict({}).tag(sync=True)
-    available_videos = traitlets.Dict({}).tag(sync=True)
+    # Seed traitlets - set by Python, read by JavaScript.
+    # Defaults are empty strings; always overwritten in __init__ with values from the asset.
+    _nwb_url = traitlets.Unicode("").tag(sync=True)
+    _nwb_asset_id = traitlets.Unicode("").tag(sync=True)
+    _nwb_asset_path = traitlets.Unicode("").tag(sync=True)
+    _dandiset_id = traitlets.Unicode("").tag(sync=True)
+    _version_id = traitlets.Unicode("").tag(sync=True)
+    _dandi_api_url = traitlets.Unicode("").tag(sync=True)
+    _dandi_api_key = traitlets.Unicode("").tag(sync=True)
+
+    # Bidirectional: empty at init, populated by JavaScript after LINDI/DANDI resolution.
+    _video_urls = traitlets.Dict({}).tag(sync=True)  # {name: url_string}
+    _video_timing = traitlets.Dict({}).tag(sync=True)  # {name: {start: float, end: float}}
+
+    # Set to True by JavaScript when LINDI returns 404. Python observes this
+    # and falls back to targeted h5py reads.
+    _lindi_failed = traitlets.Bool(False).tag(sync=True)
+
     selected_videos = traitlets.List([]).tag(sync=True)
     layout_mode = traitlets.Unicode("row").tag(sync=True)
     settings_open = traitlets.Bool(False).tag(sync=True)
@@ -96,117 +96,56 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
     def __init__(
         self,
         asset: RemoteAsset,
-        nwbfile: Optional[NWBFile] = None,
         video_grid: Optional[list[list[str]]] = None,
         video_labels: Optional[dict[str, str]] = None,
+        nwbfile=None,
         **kwargs,
     ):
-        # Load NWB file if not provided
-        if nwbfile is None:
-            nwbfile = self._load_nwbfile_from_dandi(asset)
-
-        video_urls = self.get_video_urls_from_dandi(nwbfile, asset)
-        video_timestamps = get_video_timestamps(nwbfile)
-        available_videos = get_video_info(nwbfile)
-        video_labels = video_labels or {}
-
-        if video_grid is not None and len(video_grid) > 0:
-            # Fixed grid mode - bypass settings panel
-            # Filter to only include videos that exist in video_urls
-            filtered_grid = [[v for v in row if v in video_urls] for row in video_grid]
-            # Remove empty rows
-            filtered_grid = [row for row in filtered_grid if row]
-            # Flatten grid to get selected videos (preserving order)
-            selected = [v for row in filtered_grid for v in row]
-            super().__init__(
-                video_urls=video_urls,
-                video_timestamps=video_timestamps,
-                available_videos=available_videos,
-                selected_videos=selected,
-                layout_mode="grid",
-                settings_open=False,
-                grid_layout=filtered_grid,
-                video_labels=video_labels,
-                **kwargs,
-            )
-        else:
-            # Interactive mode (current behavior)
-            super().__init__(
-                video_urls=video_urls,
-                video_timestamps=video_timestamps,
-                available_videos=available_videos,
-                selected_videos=[],
-                layout_mode="grid",
-                settings_open=True,
-                grid_layout=[],
-                video_labels=video_labels,
-                **kwargs,
+        if nwbfile is not None:
+            warnings.warn(
+                "The 'nwbfile' parameter no longer has any effect. "
+                "Video metadata is now fetched in JavaScript via LINDI. "
+                "This parameter will be removed in v0.1.8.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
-    @staticmethod
-    def _load_nwbfile_from_dandi(asset: RemoteAsset) -> NWBFile:
-        """Load an NWB file from DANDI via streaming.
+        auth_header = asset.client.session.headers.get("Authorization", "")
+        api_key = auth_header[6:] if auth_header.startswith("token ") else ""
 
-        Parameters
-        ----------
-        asset : RemoteAsset
-            DANDI asset object
+        super().__init__(
+            _nwb_url=asset.get_content_url(follow_redirects=1, strip_query=False),
+            _nwb_asset_id=asset.identifier,
+            _nwb_asset_path=asset.path,
+            _dandiset_id=asset.dandiset_id,
+            _version_id=asset.version_id,
+            _dandi_api_url=asset.client.api_url,
+            _dandi_api_key=api_key,
+            _video_urls={},
+            _video_timing={},
+            selected_videos=[],
+            layout_mode="grid",
+            settings_open=not bool(video_grid),
+            grid_layout=list(video_grid) if video_grid else [],
+            video_labels=video_labels or {},
+            **kwargs,
+        )
 
-        Returns
-        -------
-        NWBFile
-            Loaded NWB file
-        """
-        import h5py
-        import remfile
-        from pynwb import NWBHDF5IO
+    @traitlets.observe("_lindi_failed")
+    def _on_lindi_failed(self, change):
+        """Fall back to targeted h5py reads when LINDI is unavailable."""
+        if not change["new"]:
+            return
 
-        s3_url = asset.get_content_url(follow_redirects=1, strip_query=True)
+        from nwb_video_widgets._utils import _resolve_video_from_dandi_hdf5
 
-        remote_file = remfile.File(s3_url)
-        h5_file = h5py.File(remote_file, "r")
-        io = NWBHDF5IO(file=h5_file, load_namespaces=True)
-        return io.read()
-
-    @staticmethod
-    def get_video_urls_from_dandi(
-        nwbfile: NWBFile,
-        asset: RemoteAsset,
-    ) -> dict[str, str]:
-        """Extract video S3 URLs from NWB file using DANDI API.
-
-        Videos in NWB files are stored as ImageSeries with external_file paths.
-        This function finds all ImageSeries with external files and resolves
-        their relative paths to full S3 URLs using the DANDI API.
-
-        Parameters
-        ----------
-        nwbfile : pynwb.NWBFile
-            NWB file containing video ImageSeries in acquisition
-        asset : RemoteAsset
-            DANDI asset object for the NWB file
-
-        Returns
-        -------
-        dict[str, str]
-            Mapping of video names to S3 URLs
-        """
-        from dandi.dandiapi import DandiAPIClient
-
-        client = DandiAPIClient()
-        dandiset = client.get_dandiset(asset.dandiset_id, asset.version_id)
-
-        # Use PurePosixPath because DANDI paths always use forward slashes
-        nwb_parent = PurePosixPath(asset.path).parent
-        video_series = discover_video_series(nwbfile)
-        video_urls = {}
-
-        for name, series in video_series.items():
-            relative_path = series.external_file[0].lstrip("./")
-            full_path = str(nwb_parent / relative_path)
-
-            video_asset = dandiset.get_asset_by_path(full_path)
-            if video_asset is not None:
-                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
-
-        return video_urls
+        video_urls, video_timing = _resolve_video_from_dandi_hdf5(
+            nwb_s3_url=self._nwb_url,
+            asset_path=self._nwb_asset_path,
+            dandiset_id=self._dandiset_id,
+            version_id=self._version_id,
+            dandi_api_url=self._dandi_api_url,
+            dandi_api_key=self._dandi_api_key,
+        )
+        self._video_urls = video_urls
+        self._video_timing = video_timing

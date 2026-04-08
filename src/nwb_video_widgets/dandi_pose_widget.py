@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pathlib
-from pathlib import PurePosixPath
+import warnings
 from typing import TYPE_CHECKING, Optional
 
 import anywidget
@@ -15,7 +15,6 @@ from pynwb import NWBFile
 
 from nwb_video_widgets._utils import (
     discover_pose_estimation_cameras,
-    discover_video_series,
     get_pose_estimation_info,
 )
 
@@ -29,9 +28,12 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     Overlays DeepLabCut keypoints on streaming video with support for
     camera selection via a settings panel.
 
-    This widget discovers PoseEstimation containers in processing['pose_estimation']
-    and resolves video paths to S3 URLs via the DANDI API. An interactive
-    settings panel allows users to select which camera to display.
+    Python injects seed traitlets extracted from the asset objects. JavaScript
+    fetches video metadata from DANDI via LINDI and the DANDI REST API,
+    then populates ``video_urls`` and ``video_timing``.
+
+    Both traitlets are bidirectional: once JavaScript fills them, the values
+    are synced back to Python automatically.
 
     Supports two common NWB patterns:
     1. Single file: both videos and pose estimation in same NWB file
@@ -41,17 +43,13 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     ----------
     asset : RemoteAsset
         DANDI asset object for the processed NWB file containing pose estimation.
-        The dandiset_id and asset path are extracted from this object.
+        Seeds (NWB URL, asset ID, dandiset ID, etc.) are extracted from this.
     nwbfile : pynwb.NWBFile, optional
         Pre-loaded NWB file containing pose estimation. If not provided, the widget
-        will load the NWB file via streaming from `asset`.
+        will load the NWB file via streaming from ``asset``.
     video_asset : RemoteAsset, optional
         DANDI asset object for the raw NWB file containing videos. If not provided,
-        videos are assumed to be accessible relative to `asset`.
-    video_nwbfile : pynwb.NWBFile, optional
-        Pre-loaded NWB file containing video ImageSeries. If not provided but
-        `video_asset` is provided, the widget will extract video URLs from `video_asset`.
-        If neither is provided, videos are assumed to be in `nwbfile`.
+        videos are assumed to be accessible relative to ``asset``.
     keypoint_colors : str or dict, default 'tab10'
         Either a matplotlib colormap name (e.g., 'tab10', 'Set1', 'Paired') for
         automatic color assignment, or a dict mapping keypoint names to hex colors
@@ -80,15 +78,6 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     ... )
     >>> display(widget)
 
-    With pre-loaded NWB files (avoids re-loading):
-
-    >>> widget = NWBDANDIPoseEstimationWidget(
-    ...     asset=processed_asset,
-    ...     nwbfile=nwbfile_processed,
-    ...     video_asset=raw_asset,
-    ...     video_nwbfile=nwbfile_raw,
-    ... )
-
     Raises
     ------
     ValueError
@@ -99,10 +88,6 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     available_cameras = traitlets.List([]).tag(sync=True)
     available_cameras_info = traitlets.Dict({}).tag(sync=True)
 
-    # Video selection - users explicitly match cameras to videos
-    available_videos = traitlets.List([]).tag(sync=True)
-    available_videos_info = traitlets.Dict({}).tag(sync=True)
-    video_name_to_url = traitlets.Dict({}).tag(sync=True)  # Video name -> URL mapping
     camera_to_video = traitlets.Dict({}).tag(sync=True)  # Camera -> video name mapping
 
     settings_open = traitlets.Bool(True).tag(sync=True)
@@ -116,6 +101,30 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     show_labels = traitlets.Bool(True).tag(sync=True)
     visible_keypoints = traitlets.Dict({}).tag(sync=True)
 
+    # Seed traitlets for the pose/processed NWB file.
+    # Defaults are empty strings; always overwritten in __init__ with values from the asset.
+    _nwb_url = traitlets.Unicode("").tag(sync=True)
+    _nwb_asset_id = traitlets.Unicode("").tag(sync=True)
+    _nwb_asset_path = traitlets.Unicode("").tag(sync=True)
+    _dandiset_id = traitlets.Unicode("").tag(sync=True)
+    _version_id = traitlets.Unicode("").tag(sync=True)
+    _dandi_api_url = traitlets.Unicode("").tag(sync=True)
+    _dandi_api_key = traitlets.Unicode("").tag(sync=True)
+
+    # Seed traitlets for the video/raw NWB file (split-file case).
+    # If empty, JavaScript falls back to the main _nwb_* seeds.
+    _video_nwb_url = traitlets.Unicode("").tag(sync=True)
+    _video_nwb_asset_id = traitlets.Unicode("").tag(sync=True)
+    _video_nwb_asset_path = traitlets.Unicode("").tag(sync=True)
+
+    # Bidirectional: empty at init, populated by JavaScript after LINDI/DANDI resolution.
+    _video_urls = traitlets.Dict({}).tag(sync=True)  # {name: url_string}
+    _video_timing = traitlets.Dict({}).tag(sync=True)  # {name: {start: float, end: float}}
+
+    # Set to True by JavaScript when LINDI returns 404. Python observes this
+    # and falls back to targeted h5py reads.
+    _lindi_failed = traitlets.Bool(False).tag(sync=True)
+
     _esm = pathlib.Path(__file__).parent / "pose_widget.js"
     _css = pathlib.Path(__file__).parent / "pose_widget.css"
 
@@ -124,29 +133,27 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         asset: RemoteAsset,
         nwbfile: Optional[NWBFile] = None,
         video_asset: Optional[RemoteAsset] = None,
-        video_nwbfile: Optional[NWBFile] = None,
         keypoint_colors: str | dict[str, str] = "tab10",
         default_camera: Optional[str] = None,
+        video_nwbfile=None,
         **kwargs,
     ):
-        # Load NWB file if not provided (for pose estimation)
+        if video_nwbfile is not None:
+            warnings.warn(
+                "The 'video_nwbfile' parameter no longer has any effect. "
+                "Video metadata is now fetched in JavaScript via LINDI. "
+                "This parameter will be removed in v0.1.8.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        # Load NWB file if not provided (still needed for pose coordinate data)
         if nwbfile is None:
             nwbfile = self._load_nwbfile_from_dandi(asset)
 
-        # Determine video source
-        # Priority: video_nwbfile > video_asset > nwbfile
-        if video_nwbfile is not None:
-            video_source_nwbfile = video_nwbfile
-        elif video_asset is not None:
-            video_source_nwbfile = self._load_nwbfile_from_dandi(video_asset)
-        else:
-            video_source_nwbfile = nwbfile
-
-        # Determine which asset to use for video URLs
-        video_source_asset = video_asset if video_asset is not None else asset
-
-        # Compute video URLs from DANDI
-        video_urls = self._get_video_urls_from_dandi(video_source_nwbfile, video_source_asset)
+        # Extract API key from auth header (same key works for both assets)
+        auth_header = asset.client.session.headers.get("Authorization", "")
+        api_key = auth_header[6:] if auth_header.startswith("token ") else ""
 
         # Parse keypoint_colors
         if isinstance(keypoint_colors, str):
@@ -156,52 +163,80 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
             colormap_name = "tab10"
             custom_colors = keypoint_colors
 
-        # Get pose estimation container
-        if "pose_estimation" not in nwbfile.processing:
-            raise ValueError("NWB file does not contain pose_estimation processing module")
-        pose_estimation = nwbfile.processing["pose_estimation"]
-
-        # Get all PoseEstimation containers (excludes Skeletons and other metadata)
+        # Get all PoseEstimation containers (location-agnostic)
         pose_containers = discover_pose_estimation_cameras(nwbfile)
+        if not pose_containers:
+            raise ValueError("NWB file does not contain any PoseEstimation objects")
         available_cameras = list(pose_containers.keys())
 
         # Get camera info for settings panel display
         available_cameras_info = get_pose_estimation_info(nwbfile)
 
-        # Get ALL available videos (sorted alphabetically)
-        available_videos = sorted(video_urls.keys())
-        available_videos_info = self._get_video_info(video_source_nwbfile)
-
-        # Video name to URL mapping (sent to JS for URL resolution)
-        video_name_to_url = video_urls
-
-        # Start with empty mapping - users explicitly select videos
-        camera_to_video = {}
-
-        # Select default camera - start with empty to show settings
+        # Select default camera
         if default_camera and default_camera in available_cameras:
             selected_camera = default_camera
         else:
             selected_camera = ""
 
         # Store references for lazy loading (not synced to JS)
-        self._pose_estimation = pose_estimation
+        self._pose_containers = pose_containers
         self._cmap = plt.get_cmap(colormap_name)
         self._custom_colors = custom_colors
+
+        # Build video seed kwargs for split-file case
+        video_seed_kwargs = {}
+        if video_asset is not None:
+            video_seed_kwargs = {
+                "_video_nwb_url": video_asset.get_content_url(follow_redirects=1, strip_query=False),
+                "_video_nwb_asset_id": video_asset.identifier,
+                "_video_nwb_asset_path": video_asset.path,
+            }
 
         super().__init__(
             selected_camera=selected_camera,
             available_cameras=available_cameras,
             available_cameras_info=available_cameras_info,
-            available_videos=available_videos,
-            available_videos_info=available_videos_info,
-            video_name_to_url=video_name_to_url,
-            camera_to_video=camera_to_video,
-            all_camera_data={},  # Start empty, load lazily
-            visible_keypoints={},  # Populated as cameras are loaded
+            camera_to_video={},
+            all_camera_data={},
+            visible_keypoints={},
             settings_open=True,
+            _nwb_url=asset.get_content_url(follow_redirects=1, strip_query=False),
+            _nwb_asset_id=asset.identifier,
+            _nwb_asset_path=asset.path,
+            _dandiset_id=asset.dandiset_id,
+            _version_id=asset.version_id,
+            _dandi_api_url=asset.client.api_url,
+            _dandi_api_key=api_key,
+            _video_urls={},
+            _video_timing={},
+            # _video_nwb_* defaults to "" (traitlet default); overridden by video_seed_kwargs
+            # when video_asset is provided.
+            **{"_video_nwb_url": "", "_video_nwb_asset_id": "", "_video_nwb_asset_path": "", **video_seed_kwargs},
             **kwargs,
         )
+
+    @traitlets.observe("_lindi_failed")
+    def _on_lindi_failed(self, change):
+        """Fall back to targeted h5py reads when LINDI is unavailable."""
+        if not change["new"]:
+            return
+
+        from nwb_video_widgets._utils import _resolve_video_from_dandi_hdf5
+
+        # Use video asset seeds if available, otherwise main asset seeds
+        nwb_s3_url = self._video_nwb_url or self._nwb_url
+        asset_path = self._video_nwb_asset_path or self._nwb_asset_path
+
+        video_urls, video_timing = _resolve_video_from_dandi_hdf5(
+            nwb_s3_url=nwb_s3_url,
+            asset_path=asset_path,
+            dandiset_id=self._dandiset_id,
+            version_id=self._version_id,
+            dandi_api_url=self._dandi_api_url,
+            dandi_api_key=self._dandi_api_key,
+        )
+        self._video_urls = video_urls
+        self._video_timing = video_timing
 
     @traitlets.observe("selected_camera")
     def _on_camera_selected(self, change):
@@ -216,7 +251,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         try:
             # Load pose data for this camera
             camera_data = self._load_camera_pose_data(
-                self._pose_estimation, camera_name, self._cmap, self._custom_colors
+                self._pose_containers, camera_name, self._cmap, self._custom_colors
             )
 
             # Update all_camera_data (must create new dict for traitlets to detect change)
@@ -240,7 +275,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         import remfile
         from pynwb import NWBHDF5IO
 
-        s3_url = asset.get_content_url(follow_redirects=1, strip_query=True)
+        s3_url = asset.get_content_url(follow_redirects=1, strip_query=False)
 
         remote_file = remfile.File(s3_url)
         h5_file = h5py.File(remote_file, "r")
@@ -248,58 +283,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         return io.read()
 
     @staticmethod
-    def _get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
-        """Get metadata for all video series."""
-        video_series = discover_video_series(nwbfile)
-        info = {}
-
-        for name, series in video_series.items():
-            timestamps = None
-            if series.timestamps is not None:
-                timestamps = series.timestamps[:]
-            elif series.starting_time is not None and series.rate is not None:
-                n_frames = series.data.shape[0] if hasattr(series.data, "shape") else 0
-                timestamps = np.arange(n_frames) / series.rate + series.starting_time
-
-            if timestamps is not None and len(timestamps) > 0:
-                info[name] = {
-                    "start": float(timestamps[0]),
-                    "end": float(timestamps[-1]),
-                    "frames": len(timestamps),
-                }
-            else:
-                info[name] = {"start": 0, "end": 0, "frames": 0}
-
-        return info
-
-    @staticmethod
-    def _get_video_urls_from_dandi(
-        nwbfile: NWBFile,
-        asset: RemoteAsset,
-    ) -> dict[str, str]:
-        """Extract video S3 URLs from NWB file using DANDI API."""
-        from dandi.dandiapi import DandiAPIClient
-
-        client = DandiAPIClient()
-        dandiset = client.get_dandiset(asset.dandiset_id, asset.version_id)
-
-        # Use PurePosixPath because DANDI paths always use forward slashes
-        nwb_parent = PurePosixPath(asset.path).parent
-        video_series = discover_video_series(nwbfile)
-        video_urls = {}
-
-        for name, series in video_series.items():
-            relative_path = series.external_file[0].lstrip("./")
-            full_path = str(nwb_parent / relative_path)
-
-            video_asset = dandiset.get_asset_by_path(full_path)
-            if video_asset is not None:
-                video_urls[name] = video_asset.get_content_url(follow_redirects=1, strip_query=True)
-
-        return video_urls
-
-    @staticmethod
-    def _load_camera_pose_data(pose_estimation, camera_name: str, cmap, custom_colors: dict) -> dict:
+    def _load_camera_pose_data(pose_containers: dict, camera_name: str, cmap, custom_colors: dict) -> dict:
         """Load pose data for a single camera.
 
         Returns a dict with:
@@ -307,7 +291,7 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         - pose_coordinates: {name: [[x, y], ...]} as JSON-serializable lists
         - timestamps: [t0, t1, ...] as JSON-serializable list
         """
-        camera_pose = pose_estimation[camera_name]
+        camera_pose = pose_containers[camera_name]
 
         keypoint_names = list(camera_pose.pose_estimation_series.keys())
         n_kp = len(keypoint_names)
@@ -319,18 +303,16 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         for index, (series_name, series) in enumerate(camera_pose.pose_estimation_series.items()):
             short_name = series_name.replace("PoseEstimationSeries", "")
 
-            # Get coordinates - iterate to build list without memory duplication
+            # Bulk C-level conversion via tolist(), then replace sparse NaN rows with None.
             data = series.data[:]
-            coords_list = []
-            for x, y in data:
-                if np.isnan(x) or np.isnan(y):
-                    coords_list.append(None)
-                else:
-                    coords_list.append([float(x), float(y)])
+            nan_mask = np.isnan(data).any(axis=1)
+            coords_list = data.tolist()
+            for nan_index in np.flatnonzero(nan_mask):
+                coords_list[nan_index] = None
             coordinates[short_name] = coords_list
 
             if timestamps is None:
-                timestamps = series.timestamps[:].tolist()
+                timestamps = series.get_timestamps()[:].tolist()
 
             # Assign color from custom dict or colormap
             if short_name in custom_colors:

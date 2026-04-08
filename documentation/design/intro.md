@@ -11,34 +11,70 @@ This directory contains technical design documentation for the NWB Video Widgets
 
 ## Architecture Summary
 
+There are two data paths depending on whether the source is local or DANDI. Both paths
+resolve to the same two internal traitlets (`_video_urls` and `_video_timing`), so
+JavaScript has a single code path for rendering regardless of the data source.
+
+**Local widgets** load NWB files and serve videos through Python. Python sets
+`_video_urls` and `_video_timing` synchronously in `__init__`.
+
+**DANDI widgets** use the Neurosift pattern: Python only extracts seed identifiers from the
+DANDI asset object. JavaScript fetches video metadata via LINDI and the DANDI REST API, then
+writes back to `_video_urls` and `_video_timing`. If LINDI is unavailable, Python falls back
+to targeted h5py reads.
+
+The pose widget (both local and DANDI) still loads the NWB file in Python for pose coordinate
+data.
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Jupyter Notebook                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────────┐          ┌─────────────────────────┐  │
-│  │  Python Widget  │◄────────►│  JavaScript Frontend    │  │
-│  │  (anywidget)    │ traitlet │  (vanilla JS + Canvas)  │  │
-│  │                 │   sync   │                         │  │
-│  └────────┬────────┘          └────────────┬────────────┘  │
-│           │                                 │               │
-│           ▼                                 ▼               │
-│  ┌─────────────────┐          ┌─────────────────────────┐  │
-│  │   NWB File      │          │   HTML5 Video + Canvas  │  │
-│  │   (pynwb)       │          │   (browser-native)      │  │
-│  └────────┬────────┘          └─────────────────────────┘  │
-│           │                                                 │
-│           ▼                                                 │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │              Data Source                             │   │
-│  │  ┌──────────────┐    ┌───────────────────────────┐  │   │
-│  │  │ Local Files  │    │ DANDI Archive (S3)        │  │   │
-│  │  │ (HTTP Server)│    │ (remfile streaming)       │  │   │
-│  │  └──────────────┘    └───────────────────────────┘  │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        Jupyter Notebook                              │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌───────────────────┐            ┌────────────────────────────────┐ │
+│  │  Python Widget    │◄──────────►│  JavaScript Frontend           │ │
+│  │  (anywidget)      │  _video_   │  (vanilla JS + Canvas)         │ │
+│  │                   │  urls +    │                                │ │
+│  │                   │  _video_   │  Reads _video_urls for <video> │ │
+│  │                   │  timing    │  Reads _video_timing for UI    │ │
+│  └──────┬────────────┘            └───────────┬────────────────────┘ │
+│         │                                     │                      │
+│    Local path                            DANDI path                  │
+│    (Python fills traitlets               (JS fills traitlets         │
+│     at init time)                         async, or Python           │
+│         │                                 fallback on 404)           │
+│         ▼                                     ▼                      │
+│  ┌───────────────────┐            ┌────────────────────────────────┐ │
+│  │  NWB File         │            │  LINDI (lindi.neurosift.org)   │ │
+│  │  (pynwb)          │            │  + DANDI REST API              │ │
+│  └──────┬────────────┘            │  fallback: h5py + remfile      │ │
+│         │                         └───────────┬────────────────────┘ │
+│         ▼                                     ▼                      │
+│  ┌───────────────────┐            ┌────────────────────────────────┐ │
+│  │  Local Files      │            │  DANDI Archive (S3)            │ │
+│  │  (HTTP Server)    │            │  (direct video streaming)      │ │
+│  └───────────────────┘            └────────────────────────────────┘ │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+### Why not unify the resolution mechanism?
+
+Both paths produce the same output (`_video_urls` + `_video_timing`), but the resolution
+mechanism is deliberately different. We considered using LINDI for local files too (the
+`lindi` library supports local paths), which would have given a single resolution path. We
+chose against it because:
+
+- For local files, Python already has the NWB file open. Reading `external_file[0]`,
+  `timestamps[0]`, and `timestamps[-1]` from an in-memory pynwb object is essentially free.
+- Generating a LINDI index scans every dataset in the HDF5 file, including large
+  electrophysiology arrays. For a typical IBL file this takes ~8 seconds, turning an instant
+  operation into a noticeable delay.
+- The unification that matters is at the traitlet interface (JavaScript has one code path),
+  not at the resolution mechanism (Python vs JS, sync vs async).
+
+See `video_widget/dandi_video_resolution.md` for details on the DANDI path and why we avoid
+a full HDF5-in-JavaScript implementation.
 
 ## Key Design Decisions
 
@@ -102,14 +138,19 @@ This directory contains technical design documentation for the NWB Video Widgets
 
 ## Shared Utilities
 
-The `_utils.py` module provides common functionality:
+The `_utils.py` module provides common functionality used by the local widgets:
 
 | Function | Purpose |
 |----------|---------|
 | `discover_video_series()` | Find ImageSeries with external video files |
 | `discover_pose_estimation_cameras()` | Find PoseEstimation containers |
+| `get_video_info()` | Extract start/end session times per video series |
+| `get_video_timestamps()` | Extract full timestamp arrays per video series |
 | `start_video_server()` | HTTP server with Range request support |
 | `get_camera_to_video_mapping()` | Auto-map camera names to video names |
+
+DANDI widgets do not use these utilities for video metadata. They use JavaScript-side
+resolution via LINDI instead (see `neurosift_pattern_migration.md`).
 
 ## Testing Strategy
 
@@ -126,4 +167,3 @@ Tested and supported:
 - Firefox 88+
 - Safari 14+
 - Edge 90+
-

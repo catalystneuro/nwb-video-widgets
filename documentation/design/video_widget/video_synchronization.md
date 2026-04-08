@@ -127,18 +127,28 @@ video.muted = true;       // Required for autoplay policies
 
 ### Session Time Display
 
-Time displays relative to NWB session, not video file:
+Time displays relative to NWB session, not video file. The source of timestamps
+depends on whether the widget is local or DANDI:
+
+**Local widgets** receive the full timestamp array from Python via `video_timestamps`:
 
 ```javascript
 function getSessionTimeOffset() {
     const timestamps = model.get("video_timestamps");
     return timestamps[videoName][0];  // First timestamp from NWB
 }
-
-// Display: sessionOffset + video.currentTime
-const currentSessionTime = offset + videos[0].currentTime;
 ```
 
+**DANDI widgets** read start/end from `video_info`, which JavaScript populated via LINDI:
+
+```javascript
+function getSessionTimeOffset() {
+    const videoInfo = model.get("video_info");
+    return videoInfo[videoName].start;  // From LINDI metadata
+}
+```
+
+In both cases the display formula is `sessionOffset + video.currentTime`.
 This allows correlation with other NWB data (neural recordings, events).
 
 ### Cleanup

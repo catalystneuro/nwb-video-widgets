@@ -71,15 +71,15 @@ class TestWidgetCreation:
         """Test creating widget with single video."""
         widget = NWBLocalVideoPlayer(nwbfile_with_single_video)
 
-        assert len(widget.video_urls) == 1
-        assert "VideoCamera" in widget.video_urls
+        assert len(widget._video_urls) == 1
+        assert "VideoCamera" in widget._video_urls
 
     def test_create_widget_multiple_videos(self, nwbfile_with_multiple_videos):
         """Test creating widget with multiple videos."""
         widget = NWBLocalVideoPlayer(nwbfile_with_multiple_videos)
 
-        assert len(widget.video_urls) == 3
-        assert len(widget.available_videos) == 3
+        assert len(widget._video_urls) == 3
+        assert len(widget._video_timing) == 3
         assert widget.layout_mode == "grid"
 
     def test_default_layout_mode(self, nwbfile_with_single_video):

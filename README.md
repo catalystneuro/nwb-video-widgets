@@ -9,6 +9,7 @@ Interactive Jupyter widgets for NWB video and pose estimation visualization. Bui
 ## Table of Contents
 
 - [Installation](#installation)
+- [Video Codec Requirements](#video-codec-requirements)
 - [Video Player Widgets](#video-player-widgets)
 - [Pose Estimation Widgets](#pose-estimation-widgets)
 ## Installation
@@ -24,6 +25,33 @@ For DANDI integration and streaming support:
 ```bash
 pip install nwb-video-widgets[dandi]
 ```
+
+## Testing
+
+To test the widgets with DANDI streaming, run the example notebook in an environment where `nwb-video-widgets[dandi]` is installed:
+
+[notebooks/example_notebook.ipynb](notebooks/example_notebook.ipynb)
+
+## Video Codec Requirements
+
+These widgets render video directly in the browser using the HTML5 `<video>` element, which only supports browser-native codecs. Videos encoded with other codecs will raise a `ValueError` when the widget is created.
+
+**Supported codecs:**
+
+| Codec | Common container |
+|-------|-----------------|
+| H.264 (AVC) | `.mp4`, `.mov` |
+| VP8 | `.webm` |
+| VP9 | `.webm` |
+| AV1 | `.mp4`, `.webm` |
+
+**Common unsupported codecs** found in NWB datasets include MJPEG (`.avi`), MPEG-4 Part 2 (`mp4v`), and FFV1. If you encounter a `ValueError`, re-encode to H.264 with ffmpeg:
+
+```bash
+ffmpeg -i input.avi -c:v libx264 -crf 18 -pix_fmt yuv420p output_h264.mp4
+```
+
+---
 
 ## Video Player Widgets
 
@@ -202,4 +230,3 @@ widget
 |-----------|------|-------------|
 | `keypoint_colors` | `str` or `dict` | Matplotlib colormap name (e.g., `'tab10'`) or dict mapping keypoint names to hex colors |
 | `default_camera` | `str` | Camera to display initially |
-

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nwb-video-widgets"
-version = "0.1.4"
+version = "0.1.7"
 description = "Interactive Jupyter widgets for NWB video and pose visualization"
 readme = "README.md"
 license = "MIT"
@@ -30,6 +30,8 @@ dependencies = [
     "pynwb",
     "numpy",
     "matplotlib",
+    "ipykernel>=7.1.0",
+    "lindi>=0.4.6",
 ]
 
 [project.optional-dependencies]
@@ -40,13 +42,13 @@ dandi = ["dandi>=0.60.0", "remfile>=0.1.13", "h5py"]
 test = [
     "pytest>=7.0",
     "pytest-cov",
+    "ndx-pose",
 ]
 
 dev = [
     "pre-commit",
     "ruff",
     "jupyterlab",
-    "ipykernel>=7.1.0",
     "opencv-python-headless",
     {include-group = "test"},
 ]
@@ -57,6 +59,9 @@ Repository = "https://github.com/catalystneuro/nwb-video-widgets"
 
 [tool.hatch.build]
 artifacts = ["src/nwb_video_widgets/*.js", "src/nwb_video_widgets/*.css"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["tests/fixtures/videos/*.mp4", "tests/fixtures/videos/*.avi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,238 @@
+"""Unit tests for NWBLocalPoseEstimationWidget."""
+
+import pytest
+
+from nwb_video_widgets import NWBLocalPoseEstimationWidget
+
+
+class TestWidgetCreation:
+    """Tests for widget instantiation."""
+
+    def test_create_widget_single_camera(self, nwbfile_with_single_camera_pose):
+        """Test creating widget with single camera."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
+
+        assert len(widget.available_cameras) == 1
+        assert "LeftCamera" in widget.available_cameras
+        assert widget.settings_open is True
+        assert widget.selected_camera == ""  # No camera selected by default
+
+    def test_create_widget_multiple_cameras(self, nwbfile_with_multiple_cameras_pose):
+        """Test creating widget with multiple cameras."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_multiple_cameras_pose)
+
+        assert len(widget.available_cameras) == 3
+        assert "LeftCamera" in widget.available_cameras
+        assert "RightCamera" in widget.available_cameras
+        assert "BodyCamera" in widget.available_cameras
+        assert widget.settings_open is True
+
+    def test_create_widget_with_videos(self, nwbfile_with_videos_and_pose):
+        """Test creating widget when videos are present."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_videos_and_pose)
+
+        assert len(widget.available_cameras) == 3
+        assert len(widget._video_urls) == 3
+        assert "VideoLeftCamera" in widget._video_urls
+        assert "VideoBodyCamera" in widget._video_urls
+        assert "VideoRightCamera" in widget._video_urls
+
+    def test_default_camera_selection(self, nwbfile_with_single_camera_pose):
+        """Test selecting a default camera."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose, default_camera="LeftCamera")
+
+        assert widget.selected_camera == "LeftCamera"
+
+    def test_invalid_default_camera(self, nwbfile_with_single_camera_pose):
+        """Test that invalid default camera falls back to no selection."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose, default_camera="NonexistentCamera")
+
+        assert widget.selected_camera == ""
+
+
+class TestLazyLoading:
+    """Tests for lazy loading of pose data."""
+
+    def test_initial_data_empty(self, nwbfile_with_multiple_cameras_pose):
+        """Test that pose data is not loaded initially."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_multiple_cameras_pose)
+
+        assert len(widget.all_camera_data) == 0
+        assert widget.loading is False
+
+    def test_data_loads_on_selection(self, nwbfile_with_single_camera_pose):
+        """Test that pose data loads when camera is selected."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
+
+        # Initially empty
+        assert len(widget.all_camera_data) == 0
+
+        # Select camera
+        widget.selected_camera = "LeftCamera"
+
+        # Data should be loaded now
+        assert "LeftCamera" in widget.all_camera_data
+        camera_data = widget.all_camera_data["LeftCamera"]
+
+        assert "keypoint_metadata" in camera_data
+        assert "pose_coordinates" in camera_data
+        assert "timestamps" in camera_data
+
+        # Check keypoints
+        assert "Nose" in camera_data["keypoint_metadata"]
+        assert "LeftEar" in camera_data["keypoint_metadata"]
+        assert "RightEar" in camera_data["keypoint_metadata"]
+
+        # Check coordinates structure
+        assert len(camera_data["pose_coordinates"]["Nose"]) == 30
+        assert len(camera_data["timestamps"]) == 30
+
+
+class TestKeypointColors:
+    """Tests for keypoint color assignment."""
+
+    def test_default_colormap(self, nwbfile_with_single_camera_pose):
+        """Test that default colormap is applied."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
+
+        widget.selected_camera = "LeftCamera"
+        camera_data = widget.all_camera_data["LeftCamera"]
+
+        # Each keypoint should have a color
+        for keypoint_name, metadata in camera_data["keypoint_metadata"].items():
+            assert "color" in metadata
+            assert metadata["color"].startswith("#")  # Hex color
+
+    def test_custom_colors(self, nwbfile_with_single_camera_pose):
+        """Test custom color assignment."""
+        custom_colors = {
+            "Nose": "#FF0000",
+            "LeftEar": "#00FF00",
+            "RightEar": "#0000FF",
+        }
+
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose, keypoint_colors=custom_colors)
+
+        widget.selected_camera = "LeftCamera"
+        camera_data = widget.all_camera_data["LeftCamera"]
+
+        # Check custom colors are applied
+        assert camera_data["keypoint_metadata"]["Nose"]["color"] == "#FF0000"
+        assert camera_data["keypoint_metadata"]["LeftEar"]["color"] == "#00FF00"
+        assert camera_data["keypoint_metadata"]["RightEar"]["color"] == "#0000FF"
+
+    def test_different_colormap(self, nwbfile_with_single_camera_pose):
+        """Test using a different colormap."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose, keypoint_colors="Set1")
+
+        widget.selected_camera = "LeftCamera"
+        camera_data = widget.all_camera_data["LeftCamera"]
+
+        # Verify colors are assigned (just check they exist)
+        for keypoint_name in ["Nose", "LeftEar", "RightEar"]:
+            assert "color" in camera_data["keypoint_metadata"][keypoint_name]
+
+
+class TestErrorHandling:
+    """Tests for error handling."""
+
+    def test_raises_for_missing_pose_module(self, nwbfile_with_single_video):
+        """Test that error is raised when no PoseEstimation objects are found."""
+        with pytest.raises(ValueError, match="NWB file does not contain any PoseEstimation objects"):
+            NWBLocalPoseEstimationWidget(nwbfile_with_single_video)
+
+    def test_raises_for_in_memory_nwbfile(self):
+        """Test that error is raised for NWB files not loaded from disk."""
+        from ndx_pose import PoseEstimation, PoseEstimationSeries
+        from pynwb import ProcessingModule
+        from pynwb.testing.mock.file import mock_NWBFile
+
+        nwbfile = mock_NWBFile()
+
+        # Add pose estimation to in-memory file
+        pose_module = ProcessingModule(
+            name="pose_estimation",
+            description="Test pose estimation",
+        )
+        nwbfile.add_processing_module(pose_module)
+
+        # Create a simple pose estimation
+        series = PoseEstimationSeries(
+            name="NosePoseEstimationSeries",
+            data=[[100.0, 200.0], [101.0, 201.0]],
+            reference_frame="top-left",
+            timestamps=[0.0, 0.1],
+        )
+        pose_estimation = PoseEstimation(
+            name="TestCamera",
+            pose_estimation_series=[series],
+        )
+        pose_module.add(pose_estimation)
+
+        with pytest.raises(ValueError, match="loaded from disk"):
+            NWBLocalPoseEstimationWidget(nwbfile)
+
+
+class TestProcessingModuleLocation:
+    """Tests that pose estimation is discovered regardless of processing module name."""
+
+    def test_pose_in_pose_estimation_module(self, nwbfile_with_single_camera_pose):
+        """Standard case: pose in 'pose_estimation' processing module."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_single_camera_pose)
+        assert "LeftCamera" in widget.available_cameras
+
+    def test_pose_in_behavior_module(self, nwbfile_with_behavior_module_pose):
+        """Pose stored in 'behavior' module is discovered correctly."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_behavior_module_pose)
+        assert len(widget.available_cameras) == 1
+        assert "LeftCamera" in widget.available_cameras
+
+    def test_pose_data_loads_from_behavior_module(self, nwbfile_with_behavior_module_pose):
+        """Pose data in 'behavior' module loads correctly on camera selection."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_behavior_module_pose)
+        widget.selected_camera = "LeftCamera"
+        assert "LeftCamera" in widget.all_camera_data
+        camera_data = widget.all_camera_data["LeftCamera"]
+        assert "keypoint_metadata" in camera_data
+        assert "Nose" in camera_data["keypoint_metadata"]
+
+    def test_pose_in_custom_module(self, nwbfile_with_custom_module_pose):
+        """Pose stored in a custom-named module is discovered correctly."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_custom_module_pose)
+        assert len(widget.available_cameras) == 2
+        assert "LeftCamera" in widget.available_cameras
+        assert "RightCamera" in widget.available_cameras
+
+
+class TestRateBasedTimestamps:
+    """Regression tests for PoseEstimationSeries with starting_time and rate."""
+
+    def test_widget_with_rate_based_timestamps(self, nwbfile_with_rate_based_pose):
+        """Widget should handle PoseEstimationSeries with starting_time and rate (not timestamps)."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_rate_based_pose)
+        widget.selected_camera = "LeftCamera"
+        data = widget.all_camera_data["LeftCamera"]
+        assert data["timestamps"] is not None
+        assert len(data["timestamps"]) == 30
+
+
+class TestVideoNameMapping:
+    """Tests for video name to URL mapping."""
+
+    def test_video_urls_extracted(self, nwbfile_with_videos_and_pose):
+        """Test that video URLs are extracted correctly."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_videos_and_pose)
+
+        assert len(widget._video_urls) == 3
+
+        # Check that URLs are HTTP addresses
+        for video_name, url in widget._video_urls.items():
+            assert url.startswith("http://127.0.0.1:")
+            assert url.endswith(".mp4")
+
+    def test_camera_to_video_initially_empty(self, nwbfile_with_videos_and_pose):
+        """Test that camera-to-video mapping starts empty."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_videos_and_pose)
+
+        # Should start empty - users need to explicitly map cameras to videos
+        assert len(widget.camera_to_video) == 0

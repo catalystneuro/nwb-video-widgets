@@ -4,8 +4,6 @@
 
 The pose estimation widget overlays DeepLabCut/SLEAP keypoints on streaming video within Jupyter notebooks. It supports both local and DANDI-hosted NWB files, with lazy-loaded pose data and interactive keypoint visibility controls.
 
-## Architecture
-
 ### File Structure
 
 ```
@@ -32,6 +30,126 @@ src/nwb_video_widgets/
 - **Color Mapping**: matplotlib colormaps
 - **NWB I/O**: pynwb with ndx-pose extension
 
+---
+
+## Core Concepts
+
+Before diving into implementation details, understanding these five mental models will help you work effectively with the widget.
+
+### 1. Traitlets as the Contract
+
+The widget uses **traitlets** (Python) with `.tag(sync=True)` to synchronize state between Python and JavaScript. This is the fundamental communication mechanism.
+
+```python
+# Python side (local_pose_widget.py)
+class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
+    selected_camera = traitlets.Unicode("").tag(sync=True)
+    all_camera_data = traitlets.Dict({}).tag(sync=True)
+    loading = traitlets.Bool(False).tag(sync=True)
+```
+
+```javascript
+// JavaScript side (pose_widget.js)
+const camera = model.get("selected_camera");
+model.set("selected_camera", "LeftCamera");
+model.save_changes();
+
+// React to Python changes
+model.on("change:all_camera_data", () => { ... });
+```
+
+**Key insight**: All mutable state flows through the model. UI updates are reactions to model changes, not direct user action handlers. This keeps Python and JavaScript synchronized.
+
+### 2. Frame-Based vs Time-Based Thinking
+
+This is the core coordination problem: **video plays in time, but pose data is frame-indexed**.
+
+```
+Video element:    video.currentTime = 3.5 seconds
+Pose data:        coordinates[frameIndex] = [x, y]
+Timestamps:       [0.0, 0.033, 0.066, 0.1, ...]  (NWB session time)
+```
+
+The widget bridges this gap with binary search:
+
+```javascript
+function getFrameIndex() {
+    const timestamps = data.timestamps;
+    const targetTime = timestamps[0] + video.currentTime;  // Convert to session time
+    return findFrameIndex(timestamps, targetTime);  // O(log n) lookup
+}
+```
+
+**Why binary search?** For 60fps 1-hour video (216K frames), binary search is O(17) operations vs linear search O(216K) per frame render.
+
+**Why not assume uniform spacing?** NWB timestamps may have irregular intervals (dropped frames, variable frame rates). Time-based lookup is robust.
+
+### 3. Canvas Overlay Pattern
+
+The widget uses two-layer rendering: a `<video>` element with a transparent `<canvas>` positioned directly on top.
+
+```
+┌─────────────────────────┐
+│       <canvas>          │  ← Pose keypoints drawn here
+│  (pointer-events: none) │
+├─────────────────────────┤
+│       <video>           │  ← Video frames rendered here
+│                         │
+└─────────────────────────┘
+```
+
+**Why canvas over video?**
+- Full control over drawing (circles, labels, colors)
+- Transparency for overlay effect
+- No interference with video controls (pointer-events: none)
+
+**Alternatives considered:**
+- WebGL shader: GPU-accelerated but complex, limited text support
+- SVG overlay: DOM-based debugging but poor performance with many points
+
+### 4. Lazy Loading Pattern
+
+Pose data is loaded on-demand when the user selects a camera, not at widget initialization.
+
+```
+Initialization:                     On Camera Selection:
+┌────────────────────────┐         ┌────────────────────────┐
+│ Discover cameras       │         │ Set loading = True     │
+│ Extract metadata only  │         │ Read series.data[:]    │
+│ all_camera_data = {}   │  ───►   │ Convert NaN → null     │
+│ Render UI immediately  │         │ Cache in all_camera_data│
+└────────────────────────┘         │ Set loading = False    │
+        O(1)                       └────────────────────────┘
+                                           O(n_frames)
+```
+
+| Metric | Eager (all cameras) | Lazy (per camera) |
+|--------|---------------------|-------------------|
+| Init time | O(n_cameras * n_frames) | O(1) |
+| Memory at start | High | Minimal |
+| First camera delay | None | ~1-2s |
+
+**Decision**: Lazy loading chosen because most sessions have 1-3 cameras, users view one at a time, and cached cameras switch instantly.
+
+### 5. Explicit User Control for Pose-to-Video Mapping
+
+The widget makes **no assumptions** about naming conventions. Users explicitly select which video to overlay each pose estimation on via dropdown menus.
+
+```
+Python sends to JS:
+├── available_cameras: ["BodyCamera", "LeftCamera"]
+├── available_videos: ["VideoBodyCamera", "VideoLeftCamera", ...]
+├── video_name_to_url: {"VideoBodyCamera": "http://...", ...}
+└── camera_to_video: {}  ← Empty at init, user fills in
+```
+
+**Why explicit selection?**
+- Works with any NWB file structure
+- User always knows what's mapped
+- No hidden assumptions to debug
+
+---
+
 ## Data Flow
 
 ### Initialization (Fast Path)
@@ -43,9 +161,6 @@ NWB File
 discover_pose_estimation_cameras()
     │ Finds PoseEstimation containers
     │ Extracts camera names and metadata
-    ▼
-Map cameras to videos
-    │ Convention: "LeftCamera" → "VideoLeftCamera"
     ▼
 Initialize widget with empty pose data
     │ available_cameras: ["LeftCamera", "RightCamera", ...]
@@ -108,26 +223,51 @@ drawPose()
     │   ├─ Scale to display dimensions
     │   ├─ Draw colored circle
     │   └─ Draw label (if enabled)
-    └─ Update debug info
+    └─ Update time display
 ```
 
+---
+
+## Data Format
+
+### Python to JavaScript (via Traitlets)
+
+```python
+all_camera_data = {
+    "LeftCamera": {
+        "keypoint_metadata": {
+            "NoseTip": {"color": "#e41a1c", "label": "NoseTip"},
+            "LeftEar": {"color": "#377eb8", "label": "LeftEar"},
+            ...
+        },
+        "pose_coordinates": {
+            "NoseTip": [[123.4, 456.7], null, [124.1, 455.2], ...],
+            "LeftEar": [[200.0, 300.0], [201.1, 299.8], null, ...],
+            ...
+        },
+        "timestamps": [0.0, 0.0333, 0.0666, ...]  # Session time
+    }
+}
+```
+
+**Key insight**: Coordinates are indexed by frame: `coordinates[keypoint_name][frame_index] = [x, y]` or `null` for missing data.
+
+### NWB Source Structure
+
+```
+nwbfile.processing["behavior"].data_interfaces["PoseEstimation"]
+├── pose_estimation_series["LeftCamera_NoseTip"]
+│   ├── data: (n_frames, 2) float array
+│   ├── timestamps: (n_frames,) float array
+│   └── confidence: (n_frames,) float array (unused currently)
+├── pose_estimation_series["LeftCamera_LeftEar"]
+│   └── ...
+└── skeleton_links (for future skeleton visualization)
+```
+
+---
+
 ## Performance Considerations
-
-### Lazy Loading Strategy
-
-**Why lazy loading?**
-
-| Metric | Eager (all cameras) | Lazy (per camera) |
-|--------|---------------------|-------------------|
-| Init time | O(n_cameras * n_frames) | O(1) |
-| Memory at start | High | Minimal |
-| First camera delay | None | ~1-2s |
-| Switch camera delay | None | ~1-2s (if not cached) |
-
-**Decision**: Lazy loading chosen because:
-- Most sessions have 1-3 cameras
-- Users typically view one camera at a time
-- Cached cameras have instant switching
 
 ### Binary Search for Frame Lookup
 
@@ -143,11 +283,6 @@ function findFrameIndex(timestamps, targetTime) {
     return left;
 }
 ```
-
-**Why not linear search?**
-- 60fps video, 1 hour = 216,000 frames
-- Linear: O(216K) per frame render
-- Binary: O(17) per frame render
 
 ### Canvas Rendering Optimization
 
@@ -189,40 +324,7 @@ function drawPose() {
 - NaN values stored as `null` (compact)
 - Only loaded cameras consume memory
 
-## Data Format
-
-### Python → JavaScript (via Traitlets)
-
-```python
-all_camera_data = {
-    "LeftCamera": {
-        "keypoint_metadata": {
-            "NoseTip": {"color": "#e41a1c", "label": "NoseTip"},
-            "LeftEar": {"color": "#377eb8", "label": "LeftEar"},
-            ...
-        },
-        "pose_coordinates": {
-            "NoseTip": [[123.4, 456.7], null, [124.1, 455.2], ...],
-            "LeftEar": [[200.0, 300.0], [201.1, 299.8], null, ...],
-            ...
-        },
-        "timestamps": [0.0, 0.0333, 0.0666, ...]  # Session time
-    }
-}
-```
-
-### NWB Source Structure
-
-```
-nwbfile.processing["behavior"].data_interfaces["PoseEstimation"]
-├── pose_estimation_series["LeftCamera_NoseTip"]
-│   ├── data: (n_frames, 2) float array
-│   ├── timestamps: (n_frames,) float array
-│   └── confidence: (n_frames,) float array (unused currently)
-├── pose_estimation_series["LeftCamera_LeftEar"]
-│   └── ...
-└── skeleton_links (for future skeleton visualization)
-```
+---
 
 ## UI/UX Design
 
@@ -232,12 +334,13 @@ nwbfile.processing["behavior"].data_interfaces["PoseEstimation"]
 ┌─────────────────────────────────────────────────────┐
 │ Settings                                      Close │
 ├─────────────────────────────────────────────────────┤
-│ Camera Selection                                    │
-│ Select a camera to display pose estimation overlay. │
+│ Pose Estimation Selection                           │
+│ Select a pose estimation to display.                │
 │                                                     │
 │ ○ BodyCamera      0:03.6 - 60:32.5    1 keypoints  │
 │ ● LeftCamera      0:03.5 - 60:32.5   11 keypoints  │
 │ ○ RightCamera     0:03.5 - 60:32.5   11 keypoints  │
+│   Video: [VideoLeftCamera ▼]                        │
 ├─────────────────────────────────────────────────────┤
 │ Keypoint Visibility                                 │
 │                                                     │
@@ -248,23 +351,6 @@ nwbfile.processing["behavior"].data_interfaces["PoseEstimation"]
 │ Display Options                                     │
 │ ☑ Show keypoint labels                             │
 └─────────────────────────────────────────────────────┘
-```
-
-### Keypoint Toggle States
-
-```css
-/* Inactive: gray background, colored border */
-.pose-widget__keypoint-toggle {
-    background: #f5f5f5;
-    border: 2px solid ${keypoint.color};
-    color: #718096;
-}
-
-/* Active: colored background, white text */
-.pose-widget__keypoint-toggle--active {
-    background: ${keypoint.color};
-    color: white;
-}
 ```
 
 ### Loading Overlay
@@ -282,126 +368,30 @@ Shown when:
 - `loading === true` (Python loading data)
 - `selected_camera && !all_camera_data[camera]` (waiting for sync)
 
-## Assumptions
+---
 
-1. **NWB structure**: Pose data in `processing["behavior"]["PoseEstimation"]`
-2. **Naming convention**: Camera "X" maps to video "VideoX" (see limitation below)
-3. **Coordinate system**: Pixel coordinates matching video dimensions
-4. **Frame alignment**: Pose timestamps align with video frames
-5. **Missing data**: Represented as NaN in NWB, null in JSON
-6. **Keypoint names**: Format "CameraName_KeypointName" in NWB
-
-## Pose-to-Video Mapping
-
-### Implementation (Explicit User Selection)
-
-The widget provides **explicit user control** over pose-to-video mapping via dropdown menus. No assumptions are made about naming conventions - users explicitly select which video to overlay each pose estimation on.
-
-#### Data Flow
+## Coordinate System
 
 ```
-Python sends to JS:
-├── available_cameras: ["BodyCamera", "LeftCamera", "RightCamera"]
-├── available_videos: ["VideoBodyCamera", "VideoLeftCamera", ...]  # Sorted alphabetically
-├── video_name_to_url: {"VideoBodyCamera": "http://...", ...}
-└── camera_to_video: {}  # Empty - user selects
+Video Frame (original)          Canvas (display)
+┌─────────────────────┐         ┌─────────────────────┐
+│ (0,0)               │         │ (0,0)               │
+│   ●─────────────────│  scale  │   ●─────────────────│
+│   │                 │ ──────► │   │                 │
+│   │  video.videoWidth         │   │  DISPLAY_WIDTH  │
+│   │  video.videoHeight        │   │  DISPLAY_HEIGHT │
+└───┴─────────────────┘         └───┴─────────────────┘
 
-JS renders:
-├── Pose estimation list with video dropdown for each
-├── Dropdowns start with "-- Select video --"
-└── User explicitly selects video for each pose estimation
+Scale factors:
+  scaleX = DISPLAY_WIDTH / video.videoWidth
+  scaleY = DISPLAY_HEIGHT / video.videoHeight
 
-User interaction:
-├── Select video from dropdown for each pose estimation
-├── Radio button enabled only when video selected
-└── Changes sync back to Python via camera_to_video trait
+Transformed coordinate:
+  canvas_x = pose_x * scaleX
+  canvas_y = pose_y * scaleY
 ```
 
-#### UI Design
-
-Each pose estimation item shows:
-```
-┌─────────────────────────────────────────────────────────────┐
-│ ○ LeftCamera                    0:03.5 - 60:32.5 | 11 kp    │
-│   Video: [-- Select video -- ▼]                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-- Radio button disabled until video selected
-- Dropdown shows all available videos (alphabetically sorted) with time ranges
-- No pre-selection - user must explicitly choose
-- User can select "-- Select video --" to unmap
-
-#### Benefits
-
-1. **No assumptions**: No naming convention requirements
-2. **Explicit control**: User always knows what's mapped
-3. **Discoverability**: All pose estimations and videos visible
-4. **Flexibility**: Works with any file structure
-
-## Trade-offs
-
-### Lazy Loading vs Eager Loading
-
-**Decision**: Lazy loading per camera
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Lazy (chosen)** | Fast init, scales to many cameras | Delay on first selection |
-| Eager | Instant switching | Slow init, high memory |
-
-**Rationale**: Acceptable delay (1-2s) for significant memory/time savings.
-
-### Full Data Sync vs Streaming
-
-**Decision**: Load entire camera dataset to JS
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Full sync (chosen)** | Instant scrubbing, simple code | Memory scales with length |
-| Streaming | Low memory | Complex, latency on seek |
-
-**Rationale**: Pose data is sparse (~16MB/camera); memory is acceptable.
-
-### Canvas Overlay vs Video Filter
-
-**Decision**: Canvas overlay on video element
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Canvas (chosen)** | Full control, transparency, labels | Two-layer rendering |
-| WebGL shader | GPU-accelerated | Complex, limited text support |
-| SVG overlay | DOM-based debugging | Poor performance with many points |
-
-**Rationale**: Canvas provides best balance of control and performance.
-
-### Frame-based vs Time-based Coordinates
-
-**Decision**: Time-based with binary search
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Time-based (chosen)** | Handles variable frame rates | Binary search overhead |
-| Frame-based | Direct array index | Assumes constant frame rate |
-
-**Rationale**: NWB timestamps may have irregular intervals; time-based is robust.
-
-### Color Assignment Strategy
-
-**Decision**: Matplotlib colormaps with override option
-
-```python
-# Default: automatic from colormap
-widget = NWBLocalPoseEstimationWidget(nwbfile, cmap="tab10")
-
-# Override: explicit hex colors
-widget = NWBLocalPoseEstimationWidget(
-    nwbfile,
-    custom_colors={"NoseTip": "#ff0000", "LeftEar": "#00ff00"}
-)
-```
-
-**Rationale**: Sensible defaults for quick visualization; customizable for publication.
+---
 
 ## Split File Support
 
@@ -428,36 +418,28 @@ widget = NWBLocalPoseEstimationWidget(
 
 **Implementation**: Widget checks `video_nwbfile` parameter; if provided, uses it for video discovery while using `nwbfile` for pose data.
 
+---
+
 ## Error Handling
 
 | Scenario | Handling |
 |----------|----------|
 | No pose data in NWB | Widget shows empty camera list |
-| Camera without video | Camera excluded from selection |
 | Missing keypoint frame | Rendered as `null`, skipped in canvas |
 | Invalid color format | Falls back to gray (#999) |
 | Network error (DANDI) | Loading state persists, browser retry |
 
-## Coordinate System
+---
 
-```
-Video Frame (original)          Canvas (display)
-┌─────────────────────┐         ┌─────────────────────┐
-│ (0,0)               │         │ (0,0)               │
-│   ●─────────────────│  scale  │   ●─────────────────│
-│   │                 │ ──────► │   │                 │
-│   │  video.videoWidth         │   │  DISPLAY_WIDTH  │
-│   │  video.videoHeight        │   │  DISPLAY_HEIGHT │
-└───┴─────────────────┘         └───┴─────────────────┘
+## Assumptions
 
-Scale factors:
-  scaleX = DISPLAY_WIDTH / video.videoWidth
-  scaleY = DISPLAY_HEIGHT / video.videoHeight
+1. **NWB structure**: Pose data in `processing["behavior"]["PoseEstimation"]`
+2. **Coordinate system**: Pixel coordinates matching video dimensions
+3. **Frame alignment**: Pose timestamps align with video frames
+4. **Missing data**: Represented as NaN in NWB, null in JSON
+5. **Keypoint names**: Format "CameraName_KeypointName" in NWB
 
-Transformed coordinate:
-  canvas_x = pose_x * scaleX
-  canvas_y = pose_y * scaleY
-```
+---
 
 ## Extensibility
 
@@ -491,6 +473,8 @@ function interpolateCoordinates(coords, frameIdx) {
     // Linear interpolate position
 }
 ```
+
+---
 
 ## Known Limitations
 

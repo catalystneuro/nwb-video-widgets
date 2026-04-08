@@ -2,6 +2,9 @@
  * Pose estimation video player widget.
  * Overlays keypoints on streaming video with pose estimation selection.
  *
+ * JavaScript fetches video metadata (URLs and session-time ranges) from DANDI
+ * via LINDI and the DANDI REST API, then writes back to the `video_urls` and `video_timing` traitlets.
+ *
  * Data format (from Python via JSON):
  * - all_camera_data: {pose_name: {keypoint_metadata, pose_coordinates, timestamps}}
  * - pose_coordinates: {keypoint_name: [[x, y], null, [x, y], ...]}
@@ -66,6 +69,303 @@ function createIcon(type) {
   }
   svg.appendChild(path);
   return svg;
+}
+
+// ============ LINDI HELPERS ============
+
+/**
+ * Decode a LINDI ref value to a string.
+ * Handles plain strings and base64-encoded strings.
+ * Returns null for range references (arrays).
+ * @param {string | Array} ref
+ * @returns {string | null}
+ */
+function lindiRefToString(ref) {
+  if (typeof ref !== "string") return null;
+  if (ref.startsWith("base64:")) {
+    return atob(ref.slice(7));
+  }
+  return ref;
+}
+
+/**
+ * Decode a LINDI ref value to a Uint8Array.
+ * Handles plain strings (treated as UTF-8) and base64-encoded binary.
+ * Returns null for range references (arrays).
+ * @param {string | Array} ref
+ * @returns {Uint8Array | null}
+ */
+function lindiRefToBytes(ref) {
+  if (typeof ref !== "string") return null;
+  if (ref.startsWith("base64:")) {
+    const binary = atob(ref.slice(7));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  return new TextEncoder().encode(ref);
+}
+
+/**
+ * Read the first string from a json2-encoded variable-length string chunk.
+ * LINDI stores object (|O) arrays using json2 filter: [val1, ..., "|O", [shape]].
+ * @param {string | Array} ref - LINDI ref value
+ * @returns {string | null}
+ */
+function readLindiJson2String(ref) {
+  const text = lindiRefToString(ref);
+  if (!text) return null;
+  try {
+    const json = JSON.parse(text);
+    if (Array.isArray(json) && json.length >= 2) {
+      return String(json[0]);
+    }
+  } catch {
+    // If not json2 format, try using the raw text directly
+  }
+  return text.trim();
+}
+
+/**
+ * Read a float64 scalar from a LINDI inline chunk (base64-encoded 8 bytes).
+ * @param {string | Array} ref - LINDI ref value
+ * @returns {number | null}
+ */
+function readLindiFloat64(ref) {
+  const bytes = lindiRefToBytes(ref);
+  if (!bytes || bytes.length < 8) return null;
+  return new DataView(bytes.buffer, bytes.byteOffset).getFloat64(0, true);
+}
+
+/**
+ * Read the first and last float64 from a timestamps dataset in LINDI refs.
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} seriesPath - e.g. "acquisition/VideoBodyCamera"
+ * @returns {Promise<{start: number, end: number} | null>}
+ */
+async function readLindiTimestamps(refs, seriesPath) {
+  const zarrayRef = refs[seriesPath + "/timestamps/.zarray"];
+  if (!zarrayRef) return null;
+
+  const zarrayText = lindiRefToString(zarrayRef);
+  if (!zarrayText) return null;
+
+  let zarray;
+  try {
+    zarray = JSON.parse(zarrayText);
+  } catch {
+    return null;
+  }
+
+  const shape = zarray.shape;
+  if (!shape || shape.length === 0) return null;
+  const nFrames = shape[0];
+  if (nFrames === 0) return null;
+
+  const chunkRef = refs[seriesPath + "/timestamps/0"];
+  if (!chunkRef) return null;
+
+  const hasCompressor = !!zarray.compressor;
+  const hasFilters = zarray.filters && zarray.filters.length > 0;
+
+  if (typeof chunkRef === "string") {
+    // Inline data: base64-encoded raw float64 bytes
+    const bytes = lindiRefToBytes(chunkRef);
+    if (!bytes || bytes.byteLength < 8) return null;
+    const floats = new Float64Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 8);
+    return { start: floats[0], end: floats[floats.length - 1] };
+  }
+
+  if (!Array.isArray(chunkRef) || chunkRef.length !== 3) return null;
+  if (hasCompressor || hasFilters) return null;
+
+  const [url, offset] = chunkRef;
+  const chunks = zarray.chunks || [nFrames];
+  const chunkSize = chunks[0];
+  const nChunks = Math.ceil(nFrames / chunkSize);
+
+  const startResp = await fetch(url, {
+    headers: { Range: `bytes=${offset}-${offset + 7}` },
+  });
+  if (!startResp.ok) return null;
+  const startBuf = await startResp.arrayBuffer();
+  const start = new DataView(startBuf).getFloat64(0, true);
+
+  let end;
+  if (nChunks === 1) {
+    const lastByteOffset = offset + (nFrames - 1) * 8;
+    const endResp = await fetch(url, {
+      headers: { Range: `bytes=${lastByteOffset}-${lastByteOffset + 7}` },
+    });
+    if (!endResp.ok) return { start, end: start };
+    const endBuf = await endResp.arrayBuffer();
+    end = new DataView(endBuf).getFloat64(0, true);
+  } else {
+    const lastChunkIdx = nChunks - 1;
+    const lastChunkRef = refs[seriesPath + "/timestamps/" + lastChunkIdx];
+    if (!lastChunkRef || !Array.isArray(lastChunkRef)) return { start, end: start };
+    const [urlLast, offsetLast] = lastChunkRef;
+    const framesInLastChunk = nFrames - lastChunkIdx * chunkSize;
+    const lastElemByteOffset = offsetLast + (framesInLastChunk - 1) * 8;
+    const endResp = await fetch(urlLast, {
+      headers: { Range: `bytes=${lastElemByteOffset}-${lastElemByteOffset + 7}` },
+    });
+    if (!endResp.ok) return { start, end: start };
+    const endBuf = await endResp.arrayBuffer();
+    end = new DataView(endBuf).getFloat64(0, true);
+  }
+
+  return { start, end };
+}
+
+/**
+ * Read session timing for an ImageSeries from LINDI refs.
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} seriesPath - e.g. "acquisition/VideoBodyCamera"
+ * @returns {Promise<{start: number, end: number}>}
+ */
+async function readLindiSeriesTiming(refs, seriesPath) {
+  const timing = await readLindiTimestamps(refs, seriesPath);
+  if (timing !== null) return timing;
+
+  const startingTimeRef = refs[seriesPath + "/starting_time/0"];
+  if (startingTimeRef) {
+    const start = readLindiFloat64(startingTimeRef);
+    if (start !== null) return { start, end: start };
+  }
+
+  return { start: 0, end: 0 };
+}
+
+// ============ VIDEO INFO RESOLUTION ============
+
+/**
+ * Resolve video info from DANDI via LINDI + DANDI REST API.
+ * For the pose widget, uses video_nwb_* seeds if set, falling back to nwb_* seeds.
+ * @param {Object} model - anywidget model proxy
+ */
+async function resolveVideoInfo(model) {
+  const dandisetId = model.get("_dandiset_id");
+  const versionId = model.get("_version_id");
+  const dandiApiUrl = model.get("_dandi_api_url");
+  const apiKey = model.get("_dandi_api_key");
+
+  // For the split-file case, use video_nwb_* seeds; fall back to main nwb_* seeds
+  const assetId =
+    model.get("_video_nwb_asset_id") || model.get("_nwb_asset_id");
+  const assetPath =
+    model.get("_video_nwb_asset_path") || model.get("_nwb_asset_path");
+
+  if (!dandisetId || !assetId) return;
+
+  const lindiEnv = dandiApiUrl.includes("sandbox") ? "dandi-staging" : "dandi";
+  const lindiUrl =
+    "https://lindi.neurosift.org/" +
+    lindiEnv +
+    "/dandisets/" +
+    dandisetId +
+    "/assets/" +
+    assetId +
+    "/nwb.lindi.json";
+
+  let lindi;
+  try {
+    const resp = await fetch(lindiUrl);
+    if (!resp.ok) throw new Error("LINDI not available (HTTP " + resp.status + ")");
+    lindi = await resp.json();
+  } catch (err) {
+    // LINDI unavailable, signal Python to fall back to targeted h5py reads
+    model.set("_lindi_failed", true);
+    model.save_changes();
+    return;
+  }
+
+  const refs = lindi.refs;
+  const videoUrls = {};
+  const videoTiming = {};
+
+  const acquiPrefix = "acquisition/";
+  const seriesNames = new Set();
+  for (const key of Object.keys(refs)) {
+    if (key.startsWith(acquiPrefix) && key.endsWith("/.zattrs")) {
+      const parts = key.split("/");
+      if (parts.length === 3) {
+        seriesNames.add(parts[1]);
+      }
+    }
+  }
+
+  const authHeaders = apiKey ? { Authorization: "token " + apiKey } : {};
+  const nwbParent = assetPath.split("/").slice(0, -1).join("/");
+
+  for (const name of seriesNames) {
+    const zattrsRef = refs[acquiPrefix + name + "/.zattrs"];
+    if (!zattrsRef) continue;
+
+    let attrs;
+    try {
+      attrs = JSON.parse(lindiRefToString(zattrsRef) || "{}");
+    } catch {
+      continue;
+    }
+    if (attrs.neurodata_type !== "ImageSeries") continue;
+
+    const extFileRef = refs[acquiPrefix + name + "/external_file/0"];
+    if (!extFileRef) continue;
+
+    const relativePath = readLindiJson2String(extFileRef);
+    if (!relativePath) continue;
+
+    const cleanRelative = relativePath.replace(/^[./]+/, "");
+    const fullPath = nwbParent ? nwbParent + "/" + cleanRelative : cleanRelative;
+
+    const { start, end } = await readLindiSeriesTiming(
+      refs,
+      acquiPrefix + name
+    );
+
+    let downloadUrl;
+    try {
+      const searchResp = await fetch(
+        dandiApiUrl +
+          "/dandisets/" +
+          dandisetId +
+          "/versions/" +
+          versionId +
+          "/assets/?path=" +
+          encodeURIComponent(fullPath),
+        { headers: authHeaders }
+      );
+      if (!searchResp.ok) continue;
+      const searchData = await searchResp.json();
+      if (!searchData.results || searchData.results.length === 0) continue;
+      const videoAssetId = searchData.results[0].asset_id;
+      downloadUrl = dandiApiUrl + "/assets/" + videoAssetId + "/download/";
+    } catch {
+      continue;
+    }
+
+    let s3Url = downloadUrl;
+    try {
+      const controller = new AbortController();
+      const redirectResp = await fetch(downloadUrl, {
+        signal: controller.signal,
+        headers: authHeaders,
+        redirect: "follow",
+      });
+      s3Url = redirectResp.url || downloadUrl;
+      controller.abort();
+    } catch {
+      // AbortError after getting headers is expected
+    }
+
+    videoUrls[name] = s3Url;
+    videoTiming[name] = { start, end };
+  }
+
+  model.set("_video_urls", videoUrls);
+  model.set("_video_timing", videoTiming);
+  model.save_changes();
 }
 
 /**
@@ -388,11 +688,12 @@ function render({ model, el }) {
 
       const infoSpan = document.createElement("span");
       infoSpan.classList.add("pose-widget__pose-item-info");
-      if (info.start !== undefined && info.end !== undefined) {
+      if (info.start !== undefined) {
+        const endLabel = info.end !== undefined && info.end > info.start ? formatTime(info.end) : "unknown";
         infoSpan.textContent =
           formatTime(info.start) +
           " - " +
-          formatTime(info.end) +
+          endLabel +
           (info.keypoints ? " | " + info.keypoints.length + " keypoints" : "");
       }
 
@@ -405,8 +706,8 @@ function render({ model, el }) {
   }
 
   function updateVideoSelect() {
-    const videos = model.get("available_videos") || [];
-    const videosInfo = model.get("available_videos_info") || {};
+    const videoUrls = model.get("_video_urls") || {};
+    const videoTiming = model.get("_video_timing") || {};
     const selectedPose = model.get("selected_camera");
     const cameraToVideo = model.get("camera_to_video") || {};
     const currentVideoName = cameraToVideo[selectedPose] || "";
@@ -419,18 +720,22 @@ function render({ model, el }) {
     emptyOption.textContent = "-- Select video --";
     videoSelect.appendChild(emptyOption);
 
-    // Add video options
-    videos.forEach((videoName) => {
+    // Add video options from video_urls, with timing from video_timing
+    for (const videoName of Object.keys(videoUrls)) {
       const option = document.createElement("option");
-      const videoInfo = videosInfo[videoName] || {};
+      const info = videoTiming[videoName] || {};
       option.value = videoName;
       option.textContent = videoName;
-      if (videoInfo.start !== undefined && videoInfo.end !== undefined) {
+      if (info.start !== undefined) {
+        const endLabel =
+          info.end !== undefined && info.end > info.start
+            ? formatTime(info.end)
+            : "unknown";
         option.textContent +=
-          " (" + formatTime(videoInfo.start) + " - " + formatTime(videoInfo.end) + ")";
+          " (" + formatTime(info.start) + " - " + endLabel + ")";
       }
       videoSelect.appendChild(option);
-    });
+    }
 
     videoSelect.value = currentVideoName;
   }
@@ -658,8 +963,8 @@ function render({ model, el }) {
       return;
     }
 
-    const videoNameToUrl = model.get("video_name_to_url") || {};
-    const videoUrl = videoNameToUrl[videoName];
+    const videoUrls = model.get("_video_urls") || {};
+    const videoUrl = videoUrls[videoName];
 
     if (videoUrl && video.src !== videoUrl) {
       video.src = videoUrl;
@@ -711,7 +1016,12 @@ function render({ model, el }) {
   });
 
   model.on("change:available_cameras", updatePoseList);
-  model.on("change:available_videos", updateVideoSelect);
+
+  model.on("change:_video_urls", () => {
+    updateVideoSelect();
+    loadVideo();
+  });
+  model.on("change:_video_timing", updateVideoSelect);
 
   model.on("change:camera_to_video", () => {
     updateSectionVisibility();
@@ -722,12 +1032,20 @@ function render({ model, el }) {
     updateLoadingState();
     createKeypointToggles();
     updateSectionVisibility();
+
+    // Update seek bar max when camera data loads
+    const data = getCurrentCameraData();
+    if (data?.timestamps?.length) {
+      seekBar.max = data.timestamps.length - 1;
+    }
+
     drawPose();
   });
 
   model.on("change:visible_keypoints", () => {
     visibleKeypoints = { ...model.get("visible_keypoints") };
     updateToggleStyles();
+    drawPose();
   });
 
   model.on("change:loading", updateLoadingState);
@@ -787,6 +1105,15 @@ function render({ model, el }) {
   wrapper.appendChild(keypointSection);
   wrapper.appendChild(displaySection);
   el.appendChild(wrapper);
+
+  // Start resolving video info in the background (guard against re-entry)
+  let videoInfoResolved = false;
+  const doResolve = async () => {
+    if (videoInfoResolved) return;
+    videoInfoResolved = true;
+    await resolveVideoInfo(model);
+  };
+  doResolve();
 
   return () => {
     if (animationId) {

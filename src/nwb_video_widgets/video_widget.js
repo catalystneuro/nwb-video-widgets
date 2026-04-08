@@ -2,7 +2,11 @@
  * Multi-camera video player widget for synchronized playback.
  * Displays videos in a configurable grid layout with unified controls.
  *
- * @typedef {Object.<string, string>} VideoUrls - Mapping of video names to URLs
+ * JavaScript fetches video metadata from DANDI via LINDI and the DANDI REST
+ * API, then writes back to the `video_urls` and `video_timing` traitlets.
+ *
+ * @typedef {Object.<string, string>} VideoUrls - Mapping of video names to S3 URLs
+ * @typedef {Object.<string, {start: number, end: number}>} VideoTiming - Mapping of video names to time ranges
  * @typedef {string[][]} GridLayout - 2D array defining video grid (rows x cols)
  */
 
@@ -53,8 +57,8 @@ function createIcon(type) {
 /**
  * Check if two videos are compatible for synchronized playback.
  * Videos are compatible if their start times are within tolerance and they have overlapping time ranges.
- * @param {Object} infoA - Video info {start, end, frames}
- * @param {Object} infoB - Video info {start, end, frames}
+ * @param {Object} infoA - Video info {start, end}
+ * @param {Object} infoB - Video info {start, end}
  * @param {number} tolerance - Maximum allowed difference in start times (default 1.0 second)
  * @returns {boolean}
  */
@@ -88,6 +92,323 @@ function calculateGridDimensions(layoutMode, count) {
     const rows = Math.ceil(count / cols);
     return { rows, cols };
   }
+}
+
+// ============ LINDI HELPERS ============
+
+/**
+ * Decode a LINDI ref value to a string.
+ * Handles plain strings and base64-encoded strings.
+ * Returns null for range references (arrays).
+ * @param {string | Array} ref
+ * @returns {string | null}
+ */
+function lindiRefToString(ref) {
+  if (typeof ref !== "string") return null;
+  if (ref.startsWith("base64:")) {
+    return atob(ref.slice(7));
+  }
+  return ref;
+}
+
+/**
+ * Decode a LINDI ref value to a Uint8Array.
+ * Handles plain strings (treated as UTF-8) and base64-encoded binary.
+ * Returns null for range references (arrays).
+ * @param {string | Array} ref
+ * @returns {Uint8Array | null}
+ */
+function lindiRefToBytes(ref) {
+  if (typeof ref !== "string") return null;
+  if (ref.startsWith("base64:")) {
+    const binary = atob(ref.slice(7));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  return new TextEncoder().encode(ref);
+}
+
+/**
+ * Read the first string from a json2-encoded variable-length string chunk.
+ * LINDI stores object (|O) arrays using json2 filter: [val1, ..., "|O", [shape]].
+ * @param {string | Array} ref - LINDI ref value
+ * @returns {string | null}
+ */
+function readLindiJson2String(ref) {
+  const text = lindiRefToString(ref);
+  if (!text) return null;
+  try {
+    const json = JSON.parse(text);
+    if (Array.isArray(json) && json.length >= 2) {
+      return String(json[0]);
+    }
+  } catch {
+    // If not json2 format, try using the raw text directly
+  }
+  return text.trim();
+}
+
+/**
+ * Read a float64 scalar from a LINDI inline chunk (base64-encoded 8 bytes).
+ * @param {string | Array} ref - LINDI ref value
+ * @returns {number | null}
+ */
+function readLindiFloat64(ref) {
+  const bytes = lindiRefToBytes(ref);
+  if (!bytes || bytes.length < 8) return null;
+  return new DataView(bytes.buffer, bytes.byteOffset).getFloat64(0, true);
+}
+
+/**
+ * Read the first and last float64 from a timestamps dataset in LINDI refs.
+ *
+ * Handles two cases:
+ * 1. Inline (small array < 1000 frames): stored as base64-encoded float64 bytes.
+ * 2. Range reference (large array): byte-range requests to the S3 URL.
+ *
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} seriesPath - e.g. "acquisition/VideoBodyCamera"
+ * @returns {Promise<{start: number, end: number} | null>}
+ */
+async function readLindiTimestamps(refs, seriesPath) {
+  const zarrayRef = refs[seriesPath + "/timestamps/.zarray"];
+  if (!zarrayRef) return null;
+
+  const zarrayText = lindiRefToString(zarrayRef);
+  if (!zarrayText) return null;
+
+  let zarray;
+  try {
+    zarray = JSON.parse(zarrayText);
+  } catch {
+    return null;
+  }
+
+  const shape = zarray.shape;
+  if (!shape || shape.length === 0) return null;
+  const nFrames = shape[0];
+  if (nFrames === 0) return null;
+
+  const chunkRef = refs[seriesPath + "/timestamps/0"];
+  if (!chunkRef) return null;
+
+  const hasCompressor = !!zarray.compressor;
+  const hasFilters = zarray.filters && zarray.filters.length > 0;
+
+  if (typeof chunkRef === "string") {
+    // Inline data: base64-encoded raw float64 bytes (no compressor for inline arrays)
+    const bytes = lindiRefToBytes(chunkRef);
+    if (!bytes || bytes.byteLength < 8) return null;
+    const floats = new Float64Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 8);
+    return { start: floats[0], end: floats[floats.length - 1] };
+  }
+
+  if (!Array.isArray(chunkRef) || chunkRef.length !== 3) return null;
+  if (hasCompressor || hasFilters) return null; // Can't do targeted byte reads with compression
+
+  // Range reference: [url, byteOffset, byteLength]
+  const [url, offset] = chunkRef;
+  const chunks = zarray.chunks || [nFrames];
+  const chunkSize = chunks[0];
+  const nChunks = Math.ceil(nFrames / chunkSize);
+
+  // Read first float64
+  const startResp = await fetch(url, {
+    headers: { Range: `bytes=${offset}-${offset + 7}` },
+  });
+  if (!startResp.ok) return null;
+  const startBuf = await startResp.arrayBuffer();
+  const start = new DataView(startBuf).getFloat64(0, true);
+
+  let end;
+  if (nChunks === 1) {
+    // Single chunk: last element is at byte (nFrames-1)*8 within the chunk
+    const lastByteOffset = offset + (nFrames - 1) * 8;
+    const endResp = await fetch(url, {
+      headers: { Range: `bytes=${lastByteOffset}-${lastByteOffset + 7}` },
+    });
+    if (!endResp.ok) return { start, end: start };
+    const endBuf = await endResp.arrayBuffer();
+    end = new DataView(endBuf).getFloat64(0, true);
+  } else {
+    // Multi-chunk: find the last chunk
+    const lastChunkIdx = nChunks - 1;
+    const lastChunkRef = refs[seriesPath + "/timestamps/" + lastChunkIdx];
+    if (!lastChunkRef || !Array.isArray(lastChunkRef)) return { start, end: start };
+    const [urlLast, offsetLast] = lastChunkRef;
+    const framesInLastChunk = nFrames - lastChunkIdx * chunkSize;
+    const lastElemByteOffset = offsetLast + (framesInLastChunk - 1) * 8;
+    const endResp = await fetch(urlLast, {
+      headers: { Range: `bytes=${lastElemByteOffset}-${lastElemByteOffset + 7}` },
+    });
+    if (!endResp.ok) return { start, end: start };
+    const endBuf = await endResp.arrayBuffer();
+    end = new DataView(endBuf).getFloat64(0, true);
+  }
+
+  return { start, end };
+}
+
+/**
+ * Read session timing for an ImageSeries from LINDI refs.
+ * Tries timestamps first; falls back to starting_time.
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} seriesPath - e.g. "acquisition/VideoBodyCamera"
+ * @returns {Promise<{start: number, end: number}>}
+ */
+async function readLindiSeriesTiming(refs, seriesPath) {
+  // Try timestamps first
+  const timing = await readLindiTimestamps(refs, seriesPath);
+  if (timing !== null) return timing;
+
+  // Fall back to starting_time (scalar float64, always inline)
+  const startingTimeRef = refs[seriesPath + "/starting_time/0"];
+  if (startingTimeRef) {
+    const start = readLindiFloat64(startingTimeRef);
+    if (start !== null) return { start, end: start };
+  }
+
+  return { start: 0, end: 0 };
+}
+
+// ============ VIDEO INFO RESOLUTION ============
+
+/**
+ * Resolve video URLs and timing from DANDI via LINDI + DANDI REST API.
+ * Sets model.video_urls and model.video_timing once complete.
+ * @param {Object} model - anywidget model proxy
+ * @param {Object} model - anywidget model proxy
+ */
+async function resolveVideoInfo(model) {
+  const dandisetId = model.get("_dandiset_id");
+  const assetId = model.get("_nwb_asset_id");
+  const assetPath = model.get("_nwb_asset_path");
+  const dandiApiUrl = model.get("_dandi_api_url");
+  const versionId = model.get("_version_id");
+  const apiKey = model.get("_dandi_api_key");
+
+  if (!dandisetId || !assetId) {
+    return;
+  }
+
+  const lindiEnv = dandiApiUrl.includes("sandbox") ? "dandi-staging" : "dandi";
+  const lindiUrl =
+    "https://lindi.neurosift.org/" +
+    lindiEnv +
+    "/dandisets/" +
+    dandisetId +
+    "/assets/" +
+    assetId +
+    "/nwb.lindi.json";
+
+  let lindi;
+  try {
+    const resp = await fetch(lindiUrl);
+    if (!resp.ok) throw new Error("LINDI not available (HTTP " + resp.status + ")");
+    lindi = await resp.json();
+  } catch (err) {
+    // LINDI unavailable, signal Python to fall back to targeted h5py reads
+    model.set("_lindi_failed", true);
+    model.save_changes();
+    return;
+  }
+
+  const refs = lindi.refs;
+  const videoUrls = {};
+  const videoTiming = {};
+
+  // Find all ImageSeries in the acquisition group
+  const acquiPrefix = "acquisition/";
+  const seriesNames = new Set();
+  for (const key of Object.keys(refs)) {
+    if (key.startsWith(acquiPrefix) && key.endsWith("/.zattrs")) {
+      const parts = key.split("/");
+      if (parts.length === 3) {
+        seriesNames.add(parts[1]);
+      }
+    }
+  }
+
+  const authHeaders = apiKey ? { Authorization: "token " + apiKey } : {};
+  const nwbParent = assetPath.split("/").slice(0, -1).join("/");
+
+  for (const name of seriesNames) {
+    // Check neurodata_type from .zattrs
+    const zattrsRef = refs[acquiPrefix + name + "/.zattrs"];
+    if (!zattrsRef) continue;
+
+    let attrs;
+    try {
+      attrs = JSON.parse(lindiRefToString(zattrsRef) || "{}");
+    } catch {
+      continue;
+    }
+    if (attrs.neurodata_type !== "ImageSeries") continue;
+
+    // Read external_file[0] - the relative path to the video file
+    const extFileRef = refs[acquiPrefix + name + "/external_file/0"];
+    if (!extFileRef) continue;
+
+    const relativePath = readLindiJson2String(extFileRef);
+    if (!relativePath) continue;
+
+    // Build full DANDI path: parent(nwb_asset_path) / relative_path
+    const cleanRelative = relativePath.replace(/^[./]+/, "");
+    const fullPath = nwbParent ? nwbParent + "/" + cleanRelative : cleanRelative;
+
+    // Read timing from timestamps or starting_time
+    const { start, end } = await readLindiSeriesTiming(
+      refs,
+      acquiPrefix + name
+    );
+
+    // Resolve video asset via DANDI REST API
+    let downloadUrl;
+    try {
+      const searchResp = await fetch(
+        dandiApiUrl +
+          "/dandisets/" +
+          dandisetId +
+          "/versions/" +
+          versionId +
+          "/assets/?path=" +
+          encodeURIComponent(fullPath),
+        { headers: authHeaders }
+      );
+      if (!searchResp.ok) continue;
+      const searchData = await searchResp.json();
+      if (!searchData.results || searchData.results.length === 0) continue;
+      const videoAssetId = searchData.results[0].asset_id;
+      downloadUrl =
+        dandiApiUrl + "/assets/" + videoAssetId + "/download/";
+    } catch {
+      continue;
+    }
+
+    // Follow redirect from download URL to get the actual S3 URL.
+    // Use AbortController to abort after headers are received (HEAD is CORS-blocked on S3).
+    let s3Url = downloadUrl;
+    try {
+      const controller = new AbortController();
+      const redirectResp = await fetch(downloadUrl, {
+        signal: controller.signal,
+        headers: authHeaders,
+        redirect: "follow",
+      });
+      s3Url = redirectResp.url || downloadUrl;
+      controller.abort();
+    } catch {
+      // AbortError after getting headers is expected; use the resolved URL
+    }
+
+    videoUrls[name] = s3Url;
+    videoTiming[name] = { start, end };
+  }
+
+  model.set("_video_urls", videoUrls);
+  model.set("_video_timing", videoTiming);
+  model.save_changes();
 }
 
 /**
@@ -217,6 +538,17 @@ function render({ model, el }) {
   layoutSection.appendChild(layoutOptionsContainer);
   settingsPanel.appendChild(layoutSection);
 
+  // Loading indicator (shown in the video list while video_urls is empty)
+  const loadingMsg = document.createElement("div");
+  loadingMsg.classList.add("video-widget__metadata-loading");
+  const loadingSpinner = document.createElement("div");
+  loadingSpinner.classList.add("video-widget__spinner");
+  const loadingText = document.createElement("span");
+  loadingText.classList.add("video-widget__metadata-loading-text");
+  loadingText.textContent = "Loading video metadata\u2026";
+  loadingMsg.appendChild(loadingSpinner);
+  loadingMsg.appendChild(loadingText);
+
   // Grid container - using CSS Grid for proper 2D layout
   const gridContainer = document.createElement("div");
   gridContainer.classList.add("video-widget__grid");
@@ -229,10 +561,28 @@ function render({ model, el }) {
   let syncAnimationId = null;
 
   /**
+   * Update loading indicator visibility based on video_urls state.
+   */
+  function updateLoadingIndicator() {
+    const urls = model.get("_video_urls") || {};
+    const hasVideos = Object.keys(urls).length > 0;
+    if (hasVideos) {
+      loadingMsg.style.display = "none";
+    } else {
+      loadingMsg.style.display = "";
+      const lindiFailed = model.get("_lindi_failed");
+      loadingText.textContent = lindiFailed
+        ? "Loading video metadata from NWB file\u2026"
+        : "Loading video metadata\u2026";
+    }
+  }
+
+  /**
    * Update the settings panel with available videos and their compatibility status.
    */
   function updateSettingsPanel() {
-    const availableVideos = model.get("available_videos");
+    const videoUrls = model.get("_video_urls") || {};
+    const videoTiming = model.get("_video_timing") || {};
     const selectedVideos = model.get("selected_videos") || [];
     const layoutMode = model.get("layout_mode") || "row";
     const settingsOpen = model.get("settings_open");
@@ -253,24 +603,21 @@ function render({ model, el }) {
     // Clear and rebuild video list
     videoList.innerHTML = "";
 
-    const videoNames = Object.keys(availableVideos);
+    const videoNames = Object.keys(videoUrls);
     if (videoNames.length === 0) {
-      const emptyMsg = document.createElement("p");
-      emptyMsg.classList.add("video-widget__empty-msg");
-      emptyMsg.textContent = "No videos available.";
-      videoList.appendChild(emptyMsg);
+      // Don't show "No videos" while still loading
       return;
     }
 
     videoNames.forEach((name) => {
-      const info = availableVideos[name];
+      const info = videoTiming[name] || { start: 0, end: 0 };
       const isSelected = selectedVideos.includes(name);
 
       // Check compatibility with currently selected videos
       let isCompatible = true;
       if (!isSelected && selectedVideos.length > 0) {
         isCompatible = selectedVideos.every((selectedName) => {
-          const selectedInfo = availableVideos[selectedName];
+          const selectedInfo = videoTiming[selectedName] || { start: 0, end: 0 };
           return areCompatible(info, selectedInfo);
         });
       }
@@ -309,7 +656,8 @@ function render({ model, el }) {
 
       const timeRange = document.createElement("span");
       timeRange.classList.add("video-widget__video-item-time");
-      timeRange.textContent = formatTime(info.start) + " - " + formatTime(info.end);
+      const endLabel = info.end > info.start ? formatTime(info.end) : "unknown";
+      timeRange.textContent = formatTime(info.start) + " - " + endLabel;
 
       videoItem.appendChild(checkbox);
       videoItem.appendChild(label);
@@ -359,29 +707,26 @@ function render({ model, el }) {
 
   /**
    * Get the session time offset for the first selected video.
-   * This is the starting timestamp from the NWB file.
+   * This is the starting timestamp from video_timing.
    */
   function getSessionTimeOffset() {
-    const timestamps = model.get("video_timestamps");
+    const videoTiming = model.get("_video_timing") || {};
     const selectedVideos = model.get("selected_videos") || [];
-    // Find the first selected video that has timestamps
     for (const name of selectedVideos) {
-      if (timestamps[name] && timestamps[name].length > 0) {
-        return timestamps[name][0];
-      }
+      if (videoTiming[name]) return videoTiming[name].start;
     }
     return 0;
   }
 
   /**
-   * Get the session end time (last timestamp) for the first selected video.
+   * Get the session end time for the first selected video.
    */
   function getSessionEndTime() {
-    const timestamps = model.get("video_timestamps");
+    const videoTiming = model.get("_video_timing") || {};
     const selectedVideos = model.get("selected_videos") || [];
     for (const name of selectedVideos) {
-      if (timestamps[name] && timestamps[name].length > 1) {
-        return timestamps[name][timestamps[name].length - 1];
+      if (videoTiming[name] && videoTiming[name].end > videoTiming[name].start) {
+        return videoTiming[name].end;
       }
     }
     return null; // Will fall back to video duration
@@ -391,7 +736,7 @@ function render({ model, el }) {
     gridContainer.innerHTML = "";
     videos = [];
     videoContainers = [];
-    const urls = model.get("video_urls");
+    const videoUrls = model.get("_video_urls") || {};
     const selectedVideos = model.get("selected_videos") || [];
     const layoutMode = model.get("layout_mode") || "row";
     const gridLayout = model.get("grid_layout") || [];
@@ -406,8 +751,8 @@ function render({ model, el }) {
       settingsBtn.style.display = "";
     }
 
-    // Filter to only selected videos that have URLs
-    const videosToShow = selectedVideos.filter((name) => urls[name]);
+    // Filter to only selected videos that have resolved URLs
+    const videosToShow = selectedVideos.filter((name) => videoUrls[name]);
 
     if (videosToShow.length === 0) {
       const emptyMsg = document.createElement("div");
@@ -428,7 +773,7 @@ function render({ model, el }) {
       // Build positions from grid_layout
       gridLayout.forEach((row, rowIdx) => {
         row.forEach((name, colIdx) => {
-          if (urls[name]) {
+          if (videoUrls[name]) {
             videoPositions.push({ name, rowIdx, colIdx });
           }
         });
@@ -452,7 +797,7 @@ function render({ model, el }) {
 
     // Place videos in grid cells
     videoPositions.forEach(({ name, rowIdx, colIdx }) => {
-      const url = urls[name];
+      const url = videoUrls[name];
 
       const videoCell = document.createElement("div");
       videoCell.classList.add("video-widget__video-cell");
@@ -572,7 +917,13 @@ function render({ model, el }) {
     model.save_changes();
   });
 
-  model.on("change:video_urls", updateVideos);
+  model.on("change:_video_urls", () => {
+    updateLoadingIndicator();
+    updateVideos();
+    updateSettingsPanel();
+  });
+  model.on("change:_video_timing", updateSettingsPanel);
+  model.on("change:_lindi_failed", updateLoadingIndicator);
   model.on("change:selected_videos", () => {
     updateVideos();
     updateSettingsPanel();
@@ -580,15 +931,25 @@ function render({ model, el }) {
   model.on("change:layout_mode", updateVideos);
   model.on("change:grid_layout", updateVideos);
   model.on("change:settings_open", updateSettingsPanel);
-  model.on("change:available_videos", updateSettingsPanel);
 
+  updateLoadingIndicator();
   updateVideos();
   updateSettingsPanel();
 
+  videoSelectionSection.appendChild(loadingMsg);
   wrapper.appendChild(settingsPanel);
   wrapper.appendChild(gridContainer);
   wrapper.appendChild(controls);
   el.appendChild(wrapper);
+
+  // Start resolving video info in the background (guard against re-entry)
+  let videoInfoResolved = false;
+  const doResolve = async () => {
+    if (videoInfoResolved) return;
+    videoInfoResolved = true;
+    await resolveVideoInfo(model);
+  };
+  doResolve();
 
   // Cleanup function (called when widget is destroyed)
   return () => {

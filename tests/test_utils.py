@@ -5,7 +5,15 @@ import pytest
 from pynwb.image import ImageSeries
 from pynwb.testing.mock.file import mock_NWBFile
 
-from nwb_video_widgets._utils import discover_video_series, get_video_timestamps
+from nwb_video_widgets._utils import (
+    BROWSER_COMPATIBLE_CODECS,
+    detect_video_codec,
+    discover_video_series,
+    get_video_info,
+    get_video_timestamps,
+    validate_video_codec,
+)
+from tests.conftest import STUB_H264_PATH, STUB_MJPEG_PATH, STUB_MP4V_PATH
 
 
 class TestDiscoverVideoSeries:
@@ -123,3 +131,97 @@ class TestGetVideoTimestamps:
 
         assert "VideoCamera" in result
         assert result["VideoCamera"] == [0.0]
+
+
+class TestGetVideoInfo:
+    """Tests for get_video_info()."""
+
+    def test_explicit_timestamps(self):
+        """Test start/end extracted from explicit timestamps."""
+        nwbfile = mock_NWBFile()
+        timestamps = np.array([5.0, 5.1, 5.2, 5.3, 5.4])
+        image_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video.mp4"],
+            timestamps=timestamps,
+        )
+        nwbfile.add_acquisition(image_series)
+
+        result = get_video_info(nwbfile)
+
+        assert result["VideoCamera"]["start"] == pytest.approx(5.0)
+        assert result["VideoCamera"]["end"] == pytest.approx(5.4)
+
+    def test_rate_based_starting_time(self):
+        """Test start/end when only starting_time is available (no explicit timestamps).
+
+        For external-file series, data is not stored in the NWB file so frame count
+        is unavailable. start and end are both set to starting_time.
+        """
+        nwbfile = mock_NWBFile()
+        image_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video.mp4"],
+            starting_time=5.0,
+            rate=30.0,
+        )
+        nwbfile.add_acquisition(image_series)
+
+        result = get_video_info(nwbfile)
+
+        assert result["VideoCamera"]["start"] == pytest.approx(5.0)
+        assert result["VideoCamera"]["end"] == pytest.approx(5.0)
+
+
+class TestDetectVideoCodec:
+    """Tests for codec detection from video file headers."""
+
+    def test_detect_h264(self):
+        """Test that H.264 MP4 is detected as avc1."""
+        codec = detect_video_codec(STUB_H264_PATH)
+        assert codec == "avc1"
+
+    def test_detect_mjpeg(self):
+        """Test that MJPEG AVI is detected as MJPG."""
+        codec = detect_video_codec(STUB_MJPEG_PATH)
+        assert codec == "MJPG"
+
+    def test_detect_mp4v(self):
+        """Test that mp4v MP4 is detected as mp4v."""
+        codec = detect_video_codec(STUB_MP4V_PATH)
+        assert codec == "mp4v"
+
+    def test_h264_is_browser_compatible(self):
+        """Test that detected H.264 codec is in the compatible set."""
+        codec = detect_video_codec(STUB_H264_PATH)
+        assert codec in BROWSER_COMPATIBLE_CODECS
+
+    def test_mjpeg_is_not_browser_compatible(self):
+        """Test that detected MJPEG codec is not in the compatible set."""
+        codec = detect_video_codec(STUB_MJPEG_PATH)
+        assert codec not in BROWSER_COMPATIBLE_CODECS
+
+    def test_mp4v_is_not_browser_compatible(self):
+        """Test that detected mp4v codec is not in the compatible set."""
+        codec = detect_video_codec(STUB_MP4V_PATH)
+        assert codec not in BROWSER_COMPATIBLE_CODECS
+
+
+class TestValidateVideoCodec:
+    """Tests for codec validation."""
+
+    def test_passes_for_h264(self):
+        """Test that H.264 video passes validation."""
+        validate_video_codec(STUB_H264_PATH)
+
+    def test_raises_for_mjpeg(self):
+        """Test that MJPEG video raises ValueError with ffmpeg command."""
+        with pytest.raises(ValueError, match="MJPG.*ffmpeg"):
+            validate_video_codec(STUB_MJPEG_PATH)
+
+    def test_raises_for_mp4v(self):
+        """Test that mp4v video raises ValueError with ffmpeg command."""
+        with pytest.raises(ValueError, match="mp4v.*ffmpeg"):
+            validate_video_codec(STUB_MP4V_PATH)
