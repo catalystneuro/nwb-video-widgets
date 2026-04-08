@@ -357,6 +357,19 @@
   margin-bottom: var(--spacing-md);
 }
 
+.video-widget__metadata-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.video-widget__metadata-loading-text {
+  font-style: italic;
+}
+
 /* ==========================================================================
    Video List
    ========================================================================== */

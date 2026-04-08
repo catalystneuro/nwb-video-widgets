@@ -32,10 +32,10 @@ class TestWidgetCreation:
         widget = NWBLocalPoseEstimationWidget(nwbfile_with_videos_and_pose)
 
         assert len(widget.available_cameras) == 3
-        assert len(widget.available_videos) == 3
-        assert "VideoLeftCamera" in widget.available_videos
-        assert "VideoBodyCamera" in widget.available_videos
-        assert "VideoRightCamera" in widget.available_videos
+        assert len(widget._video_urls) == 3
+        assert "VideoLeftCamera" in widget._video_urls
+        assert "VideoBodyCamera" in widget._video_urls
+        assert "VideoRightCamera" in widget._video_urls
 
     def test_default_camera_selection(self, nwbfile_with_single_camera_pose):
         """Test selecting a default camera."""
@@ -223,10 +223,10 @@ class TestVideoNameMapping:
         """Test that video URLs are extracted correctly."""
         widget = NWBLocalPoseEstimationWidget(nwbfile_with_videos_and_pose)
 
-        assert len(widget.video_name_to_url) == 3
+        assert len(widget._video_urls) == 3
 
         # Check that URLs are HTTP addresses
-        for video_name, url in widget.video_name_to_url.items():
+        for video_name, url in widget._video_urls.items():
             assert url.startswith("http://127.0.0.1:")
             assert url.endswith(".mp4")
 

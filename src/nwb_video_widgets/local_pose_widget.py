@@ -82,10 +82,9 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
     available_cameras = traitlets.List([]).tag(sync=True)
     available_cameras_info = traitlets.Dict({}).tag(sync=True)
 
-    # Video selection - users explicitly match cameras to videos
-    available_videos = traitlets.List([]).tag(sync=True)
-    available_videos_info = traitlets.Dict({}).tag(sync=True)
-    video_name_to_url = traitlets.Dict({}).tag(sync=True)  # Video name -> URL mapping
+    # Video data - set by Python in __init__, read by JavaScript
+    _video_urls = traitlets.Dict({}).tag(sync=True)  # {name: url_string}
+    _video_timing = traitlets.Dict({}).tag(sync=True)  # {name: {start: float, end: float}}
     camera_to_video = traitlets.Dict({}).tag(sync=True)  # Camera -> video name mapping
 
     settings_open = traitlets.Bool(True).tag(sync=True)
@@ -133,15 +132,7 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
         # Get camera info for settings panel display
         available_cameras_info = get_pose_estimation_info(nwbfile)
 
-        # Get ALL available videos (sorted alphabetically)
-        available_videos = sorted(video_urls.keys())
-        available_videos_info = self._get_video_info(video_source)
-
-        # Video name to URL mapping (sent to JS for URL resolution)
-        video_name_to_url = video_urls
-
-        # Start with empty mapping - users explicitly select videos
-        camera_to_video = {}
+        video_timing = self._get_video_info(video_source)
 
         # Select default camera - start with empty to show settings
         if default_camera and default_camera in available_cameras:
@@ -158,12 +149,11 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
             selected_camera=selected_camera,
             available_cameras=available_cameras,
             available_cameras_info=available_cameras_info,
-            available_videos=available_videos,
-            available_videos_info=available_videos_info,
-            video_name_to_url=video_name_to_url,
-            camera_to_video=camera_to_video,
-            all_camera_data={},  # Start empty, load lazily
-            visible_keypoints={},  # Populated as cameras are loaded
+            _video_urls=video_urls,
+            _video_timing=video_timing,
+            camera_to_video={},
+            all_camera_data={},
+            visible_keypoints={},
             settings_open=True,
             **kwargs,
         )

@@ -9,6 +9,7 @@ from nwb_video_widgets._utils import (
     BROWSER_COMPATIBLE_CODECS,
     detect_video_codec,
     discover_video_series,
+    get_video_info,
     get_video_timestamps,
     validate_video_codec,
 )
@@ -130,6 +131,48 @@ class TestGetVideoTimestamps:
 
         assert "VideoCamera" in result
         assert result["VideoCamera"] == [0.0]
+
+
+class TestGetVideoInfo:
+    """Tests for get_video_info()."""
+
+    def test_explicit_timestamps(self):
+        """Test start/end extracted from explicit timestamps."""
+        nwbfile = mock_NWBFile()
+        timestamps = np.array([5.0, 5.1, 5.2, 5.3, 5.4])
+        image_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video.mp4"],
+            timestamps=timestamps,
+        )
+        nwbfile.add_acquisition(image_series)
+
+        result = get_video_info(nwbfile)
+
+        assert result["VideoCamera"]["start"] == pytest.approx(5.0)
+        assert result["VideoCamera"]["end"] == pytest.approx(5.4)
+
+    def test_rate_based_starting_time(self):
+        """Test start/end when only starting_time is available (no explicit timestamps).
+
+        For external-file series, data is not stored in the NWB file so frame count
+        is unavailable. start and end are both set to starting_time.
+        """
+        nwbfile = mock_NWBFile()
+        image_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video.mp4"],
+            starting_time=5.0,
+            rate=30.0,
+        )
+        nwbfile.add_acquisition(image_series)
+
+        result = get_video_info(nwbfile)
+
+        assert result["VideoCamera"]["start"] == pytest.approx(5.0)
+        assert result["VideoCamera"]["end"] == pytest.approx(5.0)
 
 
 class TestDetectVideoCodec:

@@ -30,8 +30,8 @@ class TestLocalVideoRoundtrip:
         loaded_nwb = read_nwb(nwb_path)
         widget = NWBLocalVideoPlayer(loaded_nwb)
 
-        assert "VideoCamera" in widget.video_urls
-        url = widget.video_urls["VideoCamera"]
+        assert "VideoCamera" in widget._video_urls
+        url = widget._video_urls["VideoCamera"]
         assert url.startswith("http://127.0.0.1:")
 
         # Verify the HTTP server responds
@@ -56,10 +56,10 @@ class TestLocalVideoRoundtrip:
         loaded_nwb = read_nwb(nwb_path)
         widget = NWBLocalVideoPlayer(loaded_nwb)
 
-        assert len(widget.video_urls) == 3
+        assert len(widget._video_urls) == 3
         for name in video_paths:
-            assert name in widget.video_urls
-            url = widget.video_urls[name]
+            assert name in widget._video_urls
+            url = widget._video_urls[name]
             assert url.startswith("http://127.0.0.1:")
             # Verify the HTTP server responds
             req = urllib.request.Request(url, method="HEAD")
@@ -84,7 +84,7 @@ class TestLocalVideoRoundtrip:
         loaded_nwb = read_nwb(nwb_path)
         widget = NWBLocalVideoPlayer(loaded_nwb)
 
-        assert "VideoCamera" in widget.video_timestamps
-        actual_timestamps = widget.video_timestamps["VideoCamera"]
-        assert len(actual_timestamps) == 30
-        np.testing.assert_array_almost_equal(actual_timestamps, expected_timestamps)
+        assert "VideoCamera" in widget._video_timing
+        timing = widget._video_timing["VideoCamera"]
+        np.testing.assert_almost_equal(timing["start"], expected_timestamps[0])
+        np.testing.assert_almost_equal(timing["end"], expected_timestamps[-1])

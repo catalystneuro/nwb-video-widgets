@@ -1,5 +1,7 @@
 """Shared utilities for NWB video widgets."""
 
+from __future__ import annotations
+
 import socket
 import struct
 import threading
@@ -269,8 +271,6 @@ def get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
             end = float(series.timestamps[-1])
         elif series.starting_time is not None:
             start = float(series.starting_time)
-            # Without timestamps, we can't determine end time accurately
-            # Use starting_time as both start and end
             end = start
         else:
             start = 0.0
@@ -282,6 +282,108 @@ def get_video_info(nwbfile: NWBFile) -> dict[str, dict]:
         }
 
     return info
+
+
+def _resolve_video_from_dandi_hdf5(
+    nwb_s3_url: str,
+    asset_path: str,
+    dandiset_id: str,
+    version_id: str,
+    dandi_api_url: str,
+    dandi_api_key: str = "",
+) -> tuple[dict[str, str], dict[str, dict]]:
+    """Resolve video URLs and timing from a DANDI NWB file using targeted h5py reads.
+
+    This is the fallback path when LINDI is unavailable. It opens the HDF5 file
+    via remfile (HTTP range requests) and reads only the specific datasets needed,
+    skipping pynwb's expensive namespace loading and object graph construction.
+
+    Parameters
+    ----------
+    nwb_s3_url : str
+        Pre-signed S3 URL for the NWB file.
+    asset_path : str
+        DANDI asset path (e.g. "sub-X/sub-X_ses-Y.nwb"), used to resolve
+        relative video paths within the dandiset.
+    dandiset_id : str
+        DANDI dandiset ID (e.g. "000409").
+    version_id : str
+        DANDI version (e.g. "draft").
+    dandi_api_url : str
+        DANDI API base URL (e.g. "https://api.dandiarchive.org/api").
+    dandi_api_key : str
+        Optional DANDI API key for embargoed dandisets.
+
+    Returns
+    -------
+    tuple[dict[str, str], dict[str, dict]]
+        (video_urls, video_timing) where video_urls maps series names to S3 URLs
+        and video_timing maps series names to {start, end} dicts.
+    """
+    from posixpath import dirname as posix_dirname
+    from posixpath import join as posix_join
+    from urllib.parse import quote
+
+    import h5py
+    import remfile
+    import requests
+
+    rf = remfile.File(nwb_s3_url)
+    h5f = h5py.File(rf, "r")
+
+    nwb_parent = posix_dirname(asset_path)
+    headers = {"Authorization": f"token {dandi_api_key}"} if dandi_api_key else {}
+
+    video_urls = {}
+    video_timing = {}
+
+    try:
+        for name in h5f["acquisition"]:
+            obj = h5f["acquisition"][name]
+            if obj.attrs.get("neurodata_type") != "ImageSeries":
+                continue
+            if "external_file" not in obj:
+                continue
+
+            raw_path = obj["external_file"][0]
+            ext_file = raw_path.decode("utf-8") if isinstance(raw_path, bytes) else raw_path
+            clean_relative = ext_file.lstrip("./")
+            full_path = posix_join(nwb_parent, clean_relative) if nwb_parent else clean_relative
+
+            # Read timing
+            if "timestamps" in obj and len(obj["timestamps"]) > 0:
+                start = float(obj["timestamps"][0])
+                end = float(obj["timestamps"][-1])
+            elif "starting_time" in obj:
+                start = float(obj["starting_time"][()])
+                end = start
+            else:
+                start, end = 0.0, 0.0
+
+            # Resolve DANDI URL via REST API.
+            # URL-encode the path (e.g. "+" in "ecephys+image" must become "%2B").
+            encoded_path = quote(full_path, safe="/")
+            search_url = f"{dandi_api_url}/dandisets/{dandiset_id}/versions/{version_id}/assets/?path={encoded_path}"
+            resp = requests.get(search_url, headers=headers)
+            if resp.status_code != 200:
+                continue
+            results = resp.json().get("results", [])
+            if not results:
+                continue
+
+            video_asset_id = results[0]["asset_id"]
+            download_url = f"{dandi_api_url}/assets/{video_asset_id}/download/"
+
+            # Follow redirect to get S3 URL
+            redirect_resp = requests.head(download_url, headers=headers, allow_redirects=True)
+            s3_url = redirect_resp.url if redirect_resp.url else download_url
+
+            video_urls[name] = s3_url
+            video_timing[name] = {"start": start, "end": end}
+    finally:
+        h5f.close()
+
+    return video_urls, video_timing
 
 
 class _RangeRequestHandler(SimpleHTTPRequestHandler):

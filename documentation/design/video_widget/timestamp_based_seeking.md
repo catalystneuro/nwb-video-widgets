@@ -169,7 +169,14 @@ The current implementation uses only the first selected video's timestamps for d
 
 ### Data Transfer
 
-The full timestamp array is sent to JavaScript (potentially 100K+ floats for long recordings) but only the first and last values are used. This is overhead that could be leveraged for accurate timestamp display.
+**Local widgets** send the full timestamp array to JavaScript (potentially 100K+ floats for
+long recordings) but only the first and last values are used for display. This is overhead
+that could be leveraged for accurate timestamp display.
+
+**DANDI widgets** no longer send timestamp arrays at all. JavaScript reads only the first and
+last values from LINDI via targeted byte-range requests, so the overhead does not apply. If
+frame-accurate timestamp display is needed for DANDI widgets in the future, the full array
+would need to be fetched on demand (see `neurosift_pattern_migration.md`, PR 3).
 
 ## Potential Future Improvement: Frame-Accurate Timestamp Display
 
