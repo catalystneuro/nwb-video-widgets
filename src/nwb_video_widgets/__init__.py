@@ -1,5 +1,6 @@
 """Interactive Jupyter widgets for NWB video and pose visualization."""
 
+from nwb_video_widgets._utils import get_dandi_video_info
 from nwb_video_widgets.dandi_pose_widget import NWBDANDIPoseEstimationWidget
 from nwb_video_widgets.dandi_video_widget import NWBDANDIVideoPlayer
 from nwb_video_widgets.local_pose_widget import NWBLocalPoseEstimationWidget
@@ -12,5 +13,5 @@ __all__ = [
     "NWBFileVideoPlayer",
     "NWBLocalPoseEstimationWidget",
     "NWBDANDIPoseEstimationWidget",
+    "get_dandi_video_info",
 ]
-__version__ = "0.1.0"
