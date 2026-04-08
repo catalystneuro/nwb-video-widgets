@@ -13,7 +13,6 @@ from pynwb import NWBFile
 from nwb_video_widgets._utils import (
     discover_video_series,
     get_video_info,
-    get_video_timestamps,
     start_video_server,
     validate_video_codec,
 )
@@ -74,9 +73,8 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
         If the NWB file was not loaded from disk (read_io is None)
     """
 
-    video_urls = traitlets.Dict({}).tag(sync=True)
-    video_timestamps = traitlets.Dict({}).tag(sync=True)
-    available_videos = traitlets.Dict({}).tag(sync=True)
+    _video_urls = traitlets.Dict({}).tag(sync=True)  # {name: url_string}
+    _video_timing = traitlets.Dict({}).tag(sync=True)  # {name: {start: float, end: float}}
     selected_videos = traitlets.List([]).tag(sync=True)
     layout_mode = traitlets.Unicode("row").tag(sync=True)
     settings_open = traitlets.Bool(False).tag(sync=True)
@@ -94,22 +92,16 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
         **kwargs,
     ):
         video_urls = self.get_video_urls_from_local(nwbfile)
-        video_timestamps = get_video_timestamps(nwbfile)
-        available_videos = get_video_info(nwbfile)
+        video_timing = get_video_info(nwbfile)
         video_labels = video_labels or {}
 
         if video_grid is not None and len(video_grid) > 0:
-            # Fixed grid mode - bypass settings panel
-            # Filter to only include videos that exist in video_urls
             filtered_grid = [[v for v in row if v in video_urls] for row in video_grid]
-            # Remove empty rows
             filtered_grid = [row for row in filtered_grid if row]
-            # Flatten grid to get selected videos (preserving order)
             selected = [v for row in filtered_grid for v in row]
             super().__init__(
-                video_urls=video_urls,
-                video_timestamps=video_timestamps,
-                available_videos=available_videos,
+                _video_urls=video_urls,
+                _video_timing=video_timing,
                 selected_videos=selected,
                 layout_mode="grid",
                 settings_open=False,
@@ -118,11 +110,9 @@ class NWBLocalVideoPlayer(anywidget.AnyWidget):
                 **kwargs,
             )
         else:
-            # Interactive mode (current behavior)
             super().__init__(
-                video_urls=video_urls,
-                video_timestamps=video_timestamps,
-                available_videos=available_videos,
+                _video_urls=video_urls,
+                _video_timing=video_timing,
                 selected_videos=[],
                 layout_mode="grid",
                 settings_open=True,

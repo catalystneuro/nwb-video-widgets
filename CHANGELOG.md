@@ -2,6 +2,10 @@
 
 ## Removals, Deprecations and changes
 
+* DANDI widgets no longer load NWB files in Python for video metadata. Video metadata (URLs and session-time ranges) is now fetched in JavaScript via LINDI and the DANDI REST API, with a Python fallback using targeted h5py reads when LINDI is unavailable. The `nwbfile` parameter on `NWBDANDIVideoPlayer` and the `video_nwbfile` parameter on `NWBDANDIPoseEstimationWidget` are deprecated and no longer have any effect. They will be removed in v0.1.8. [PR #35](https://github.com/catalystneuro/nwb-video-widgets/pull/35)
+* Removed private helpers `_get_video_urls_from_dandi` and `_get_dandi_video_info` from `_utils.py`. [PR #35](https://github.com/catalystneuro/nwb-video-widgets/pull/35)
+* Unified internal traitlet interface across all widget types. Local and DANDI widgets now use the same internal traitlets for video URLs and timing. [PR #35](https://github.com/catalystneuro/nwb-video-widgets/pull/35)
+
 ## Bug Fixes
 
 ## Features

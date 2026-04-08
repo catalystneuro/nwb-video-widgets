@@ -50,11 +50,9 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
     ... )
     """
 
-    video_urls = traitlets.Dict({}).tag(sync=True)
+    _video_urls = traitlets.Dict({}).tag(sync=True)  # {name: url_string}
+    _video_timing = traitlets.Dict({}).tag(sync=True)  # {name: {start: float, end: float}}
     grid_layout = traitlets.List([]).tag(sync=True)
-    # Timestamps for each video: {video_name: [t0, t1, ...]}
-    # Used to display NWB session time instead of video-relative time
-    video_timestamps = traitlets.Dict({}).tag(sync=True)
 
     _esm = pathlib.Path(__file__).parent / "video_widget.js"
     _css = pathlib.Path(__file__).parent / "video_widget.css"
@@ -67,12 +65,12 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
         **kwargs,
     ):
         video_urls = self.get_video_urls_from_dandi(nwbfile_raw, dandi_asset)
-        video_timestamps = self.get_video_timestamps(nwbfile_raw)
+        video_timing = self._get_video_timing(nwbfile_raw)
         layout = grid_layout if grid_layout is not None else DEFAULT_GRID_LAYOUT
         super().__init__(
-            video_urls=video_urls,
+            _video_urls=video_urls,
+            _video_timing=video_timing,
             grid_layout=layout,
-            video_timestamps=video_timestamps,
             **kwargs,
         )
 
@@ -132,8 +130,8 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
         return video_urls
 
     @staticmethod
-    def get_video_timestamps(nwbfile_raw) -> dict[str, list[float]]:
-        """Extract video timestamps from NWB file ImageSeries.
+    def _get_video_timing(nwbfile_raw) -> dict[str, dict]:
+        """Extract video time ranges from NWB file ImageSeries.
 
         Parameters
         ----------
@@ -143,27 +141,22 @@ class NWBFileVideoPlayer(anywidget.AnyWidget):
         Returns
         -------
         dict
-            Mapping of video names to timestamp arrays.
-            Each array contains the NWB session timestamps for each frame.
+            Mapping of video names to {start, end} dicts.
         """
         from pynwb.image import ImageSeries
 
-        video_timestamps = {}
+        timing = {}
 
         for name, obj in nwbfile_raw.acquisition.items():
             if isinstance(obj, ImageSeries) and obj.external_file is not None:
-                # Get timestamps - could be explicit or computed from starting_time + rate
-                if obj.timestamps is not None:
-                    timestamps = obj.timestamps[:]
-                elif obj.starting_time is not None and obj.rate is not None:
-                    # Compute timestamps from starting_time and rate
-                    n_frames = len(obj.external_file) if hasattr(obj, "dimension") else 1
-                    # For external files, we may not know frame count upfront
-                    # Use a reasonable estimate or just store start/rate info
-                    timestamps = [obj.starting_time]
+                if obj.timestamps is not None and len(obj.timestamps) > 0:
+                    start = float(obj.timestamps[0])
+                    end = float(obj.timestamps[-1])
+                elif obj.starting_time is not None:
+                    start = float(obj.starting_time)
+                    end = start
                 else:
-                    timestamps = [0.0]
+                    start, end = 0.0, 0.0
+                timing[name] = {"start": start, "end": end}
 
-                video_timestamps[name] = [float(t) for t in timestamps]
-
-        return video_timestamps
+        return timing

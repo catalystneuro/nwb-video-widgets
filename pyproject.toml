@@ -31,6 +31,7 @@ dependencies = [
     "numpy",
     "matplotlib",
     "ipykernel>=7.1.0",
+    "lindi>=0.4.6",
 ]
 
 [project.optional-dependencies]
