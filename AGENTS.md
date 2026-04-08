@@ -1,5 +1,3 @@
-# CLAUDE.md
-
 ## Project overview
 
 nwb-video-widgets is a Python library providing interactive Jupyter widgets for visualizing NWB (Neurodata Without Borders) video data and pose estimation overlays. Built with `anywidget` for cross-platform Jupyter compatibility (JupyterLab, Notebook, VS Code, Colab). Supports both local NWB files and remote streaming from the DANDI Archive.
