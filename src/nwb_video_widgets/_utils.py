@@ -347,6 +347,7 @@ def _resolve_video_from_dandi_hdf5(
 
             raw_path = obj["external_file"][0]
             ext_file = raw_path.decode("utf-8") if isinstance(raw_path, bytes) else raw_path
+            ext_file = ext_file.replace("\\", "/")
             clean_relative = ext_file.lstrip("./")
             full_path = posix_join(nwb_parent, clean_relative) if nwb_parent else clean_relative
 

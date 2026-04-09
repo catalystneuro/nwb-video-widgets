@@ -8,6 +8,8 @@
 
 ## Bug Fixes
 
+* Fixed `get_dandi_video_info()` returning empty results for NWB files created on Windows. The `external_file` paths in these files use backslashes (e.g. dandiset 001771), which failed to match DANDI's forward-slash asset paths. [PR #38](https://github.com/catalystneuro/nwb-video-widgets/pull/38)
+
 ## Features
 
 * Added `get_dandi_video_info(asset)` public function that returns video URLs and session-time ranges for a DANDI NWB asset. No widget or display required. [PR #36](https://github.com/catalystneuro/nwb-video-widgets/pull/36)
