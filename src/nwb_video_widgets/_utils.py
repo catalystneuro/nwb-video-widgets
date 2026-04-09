@@ -386,6 +386,53 @@ def _resolve_video_from_dandi_hdf5(
     return video_urls, video_timing
 
 
+def get_dandi_video_info(asset) -> dict[str, dict]:
+    """Return video URLs and session-time ranges for a DANDI NWB asset.
+
+    This is a convenience wrapper around the internal resolution function.
+    It opens the NWB file via HTTP range requests (no pynwb), finds all
+    ImageSeries with external video files, reads their timing, and resolves
+    the video paths to S3 URLs via the DANDI REST API.
+
+    Parameters
+    ----------
+    asset : dandi.dandiapi.RemoteAsset
+        DANDI asset object for the NWB file containing video ImageSeries.
+
+    Returns
+    -------
+    dict[str, dict]
+        Mapping of video series names to dicts with keys:
+        - url: str, S3 URL for the video file
+        - start: float, session start time in seconds
+        - end: float, session end time in seconds
+
+    Example
+    -------
+    >>> from dandi.dandiapi import DandiAPIClient
+    >>> from nwb_video_widgets import get_dandi_video_info
+    >>> client = DandiAPIClient()
+    >>> dandiset = client.get_dandiset("000409", "0.260309.1324")
+    >>> asset = dandiset.get_asset_by_path("sub-NYU-46/sub-NYU-46_ses-..._desc-raw_ecephys.nwb")
+    >>> info = get_dandi_video_info(asset)
+    >>> info["VideoBodyCamera"]
+    {'url': 'https://dandiarchive.s3.amazonaws.com/...', 'start': 6.57, 'end': 4030.42}
+    """
+    auth_header = asset.client.session.headers.get("Authorization", "")
+    api_key = auth_header[6:] if auth_header.startswith("token ") else ""
+
+    s3_url = asset.get_content_url(follow_redirects=1, strip_query=False)
+    video_urls, video_timing = _resolve_video_from_dandi_hdf5(
+        nwb_s3_url=s3_url,
+        asset_path=asset.path,
+        dandiset_id=asset.dandiset_id,
+        version_id=asset.version_id,
+        dandi_api_url=asset.client.api_url,
+        dandi_api_key=api_key,
+    )
+    return {name: {"url": video_urls[name], **video_timing[name]} for name in video_urls}
+
+
 class _RangeRequestHandler(SimpleHTTPRequestHandler):
     """HTTP request handler with CORS headers and Range request support for video streaming."""
 

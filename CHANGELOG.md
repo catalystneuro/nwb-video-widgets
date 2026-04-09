@@ -10,6 +10,8 @@
 
 ## Features
 
+* Added `get_dandi_video_info(asset)` public function that returns video URLs and session-time ranges for a DANDI NWB asset. No widget or display required. [PR #36](https://github.com/catalystneuro/nwb-video-widgets/pull/36)
+
 ## Improvements
 
 # v0.1.6 (2026-04-06)

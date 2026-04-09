@@ -82,3 +82,30 @@ def test_hdf5_fallback_resolves_videos():
         assert name in video_timing
         assert video_timing[name]["start"] > 0
         assert video_timing[name]["end"] > video_timing[name]["start"]
+
+
+@pytest.mark.integration
+def test_get_dandi_video_info():
+    """Test the public get_dandi_video_info() function against real DANDI data."""
+    from dandi.dandiapi import DandiAPIClient
+
+    from nwb_video_widgets import get_dandi_video_info
+
+    client = DandiAPIClient()
+    dandiset = client.get_dandiset("000409", "0.260309.1324")
+
+    session_eid = "64e3fb86-928c-4079-865c-b364205b502e"
+    session_assets = [asset for asset in dandiset.get_assets() if session_eid in asset.path]
+    raw_asset = next((asset for asset in session_assets if "desc-raw" in asset.path), None)
+
+    info = get_dandi_video_info(raw_asset)
+
+    # URLs contain pre-signed S3 query parameters that change on every request,
+    # so we only compare timing.
+    timing_only = {name: {"start": v["start"], "end": v["end"]} for name, v in info.items()}
+    expected_timing = {
+        "VideoBodyCamera": {"start": 6.577342200006577, "end": 4030.4229174040306},
+        "VideoLeftCamera": {"start": 6.532580010006533, "end": 4030.4061524140307},
+        "VideoRightCamera": {"start": 6.5000832600065, "end": 4030.4301166840305},
+    }
+    assert timing_only == expected_timing
