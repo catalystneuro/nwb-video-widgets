@@ -17,7 +17,7 @@ jobs:
       python-versions: ${{ steps.load.outputs.python_versions }}
       os-versions: ${{ steps.load.outputs.os_versions }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: load
         run: |
           echo "python_versions=$(cat ./.github/workflows/all_python_versions.txt)" >> "$GITHUB_OUTPUT"

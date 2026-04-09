@@ -19,13 +19,13 @@ jobs:
 
     name: Assess changed files
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@v46.0.1
+        uses: tj-actions/changed-files@v47
 
       - name: Assess changes
         id: assess-changes
