@@ -109,3 +109,30 @@ def test_get_dandi_video_info():
         "VideoRightCamera": {"start": 6.5000832600065, "end": 4030.4301166840305},
     }
     assert timing_only == expected_timing
+
+
+@pytest.mark.integration
+def test_get_dandi_video_info_windows_backslash_paths():
+    """Regression: NWB files created on Windows have backslashes in external_file paths.
+
+    Dandiset 001771 was authored on Windows, so external_file entries contain
+    backslashes (e.g. "ses-1_image\\abc123.mp4"). These must be normalized to
+    forward slashes when querying the DANDI API.
+    """
+    from dandi.dandiapi import DandiAPIClient
+
+    from nwb_video_widgets import get_dandi_video_info
+
+    client = DandiAPIClient()
+    dandiset = client.get_dandiset("001771", "draft")
+
+    session_eid = "2026-02-12-1"
+    video_asset = next(a for a in dandiset.get_assets() if session_eid in a.path and a.path.endswith("_image.nwb"))
+
+    info = get_dandi_video_info(video_asset)
+
+    assert len(info) == 6
+    for name, entry in info.items():
+        assert entry["url"].startswith("https://")
+        assert entry["start"] >= 0
+        assert entry["end"] > entry["start"]
