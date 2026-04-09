@@ -238,6 +238,46 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         self._video_urls = video_urls
         self._video_timing = video_timing
 
+    @classmethod
+    def from_url(
+        cls, url: str, video_url: str | None = None, token: str = "", **kwargs
+    ) -> NWBDANDIPoseEstimationWidget:
+        """Create a widget from DANDI URL(s).
+
+        Parameters
+        ----------
+        url : str
+            A DANDI API URL pointing to the NWB asset with pose estimation data.
+        video_url : str, optional
+            A DANDI API URL pointing to the NWB asset with video data
+            (split-file case). If not provided, videos are assumed to be in
+            the same asset as pose data.
+        token : str, optional
+            DANDI API token for embargoed dandisets.
+
+        Returns
+        -------
+        NWBDANDIPoseEstimationWidget
+        """
+        from dandi.dandiarchive import parse_dandi_url
+
+        parsed = parse_dandi_url(url)
+        client = parsed.get_client()
+        if token:
+            client.dandi_authenticate(token)
+        assets = list(parsed.get_assets(client))
+        if not assets:
+            raise ValueError(f"No asset found at {url}")
+
+        video_asset = None
+        if video_url:
+            video_parsed = parse_dandi_url(video_url)
+            video_assets = list(video_parsed.get_assets(client))
+            if video_assets:
+                video_asset = video_assets[0]
+
+        return cls(asset=assets[0], video_asset=video_asset, **kwargs)
+
     @traitlets.observe("selected_camera")
     def _on_camera_selected(self, change):
         """Load pose data lazily when a camera is selected."""

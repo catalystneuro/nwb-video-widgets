@@ -112,6 +112,26 @@ def test_get_dandi_video_info():
 
 
 @pytest.mark.integration
+def test_get_dandi_video_info_from_url():
+    """Test get_dandi_video_info() with a DANDI URL instead of an asset object."""
+    from nwb_video_widgets import get_dandi_video_info
+
+    url = (
+        "https://api.dandiarchive.org/api/dandisets/000409/versions/0.260309.1324/assets/"
+        "?path=sub-NYU-46/sub-NYU-46_ses-64e3fb86-928c-4079-865c-b364205b502e_desc-raw_ecephys.nwb"
+    )
+    info = get_dandi_video_info(url=url)
+
+    expected_timing = {
+        "VideoBodyCamera": {"start": 6.577342200006577, "end": 4030.4229174040306},
+        "VideoLeftCamera": {"start": 6.532580010006533, "end": 4030.4061524140307},
+        "VideoRightCamera": {"start": 6.5000832600065, "end": 4030.4301166840305},
+    }
+    timing_only = {name: {"start": v["start"], "end": v["end"]} for name, v in info.items()}
+    assert timing_only == expected_timing
+
+
+@pytest.mark.integration
 def test_get_dandi_video_info_windows_backslash_paths():
     """Regression: NWB files created on Windows have backslashes in external_file paths.
 

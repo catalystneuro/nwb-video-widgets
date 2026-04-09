@@ -149,3 +149,31 @@ class NWBDANDIVideoPlayer(anywidget.AnyWidget):
         )
         self._video_urls = video_urls
         self._video_timing = video_timing
+
+    @classmethod
+    def from_url(cls, url: str, token: str = "", **kwargs) -> NWBDANDIVideoPlayer:
+        """Create a widget from a DANDI URL.
+
+        Parameters
+        ----------
+        url : str
+            A DANDI API URL pointing to an NWB asset. Supported formats:
+            ``https://api.dandiarchive.org/api/dandisets/{id}/versions/{version}/assets/?path={path}``
+            or ``https://api.dandiarchive.org/api/assets/{uuid}/download/``.
+        token : str, optional
+            DANDI API token for embargoed dandisets.
+
+        Returns
+        -------
+        NWBDANDIVideoPlayer
+        """
+        from dandi.dandiarchive import parse_dandi_url
+
+        parsed = parse_dandi_url(url)
+        client = parsed.get_client()
+        if token:
+            client.dandi_authenticate(token)
+        assets = list(parsed.get_assets(client))
+        if not assets:
+            raise ValueError(f"No asset found at {url}")
+        return cls(asset=assets[0], **kwargs)

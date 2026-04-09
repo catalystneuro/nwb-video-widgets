@@ -387,18 +387,24 @@ def _resolve_video_from_dandi_hdf5(
     return video_urls, video_timing
 
 
-def get_dandi_video_info(asset) -> dict[str, dict]:
+def get_dandi_video_info(asset=None, url=None, token="") -> dict[str, dict]:
     """Return video URLs and session-time ranges for a DANDI NWB asset.
 
-    This is a convenience wrapper around the internal resolution function.
-    It opens the NWB file via HTTP range requests (no pynwb), finds all
-    ImageSeries with external video files, reads their timing, and resolves
-    the video paths to S3 URLs via the DANDI REST API.
+    Accepts either a ``RemoteAsset`` object or a DANDI URL string. Opens the
+    NWB file via HTTP range requests (no pynwb), finds all ImageSeries with
+    external video files, reads their timing, and resolves the video paths to
+    S3 URLs via the DANDI REST API.
 
     Parameters
     ----------
-    asset : dandi.dandiapi.RemoteAsset
+    asset : dandi.dandiapi.RemoteAsset, optional
         DANDI asset object for the NWB file containing video ImageSeries.
+    url : str, optional
+        A DANDI API URL pointing to the NWB asset. Supported formats:
+        ``https://api.dandiarchive.org/api/dandisets/{id}/versions/{version}/assets/?path={path}``
+        or ``https://api.dandiarchive.org/api/assets/{uuid}/download/``.
+    token : str, optional
+        DANDI API token for embargoed dandisets (only used with ``url``).
 
     Returns
     -------
@@ -410,15 +416,26 @@ def get_dandi_video_info(asset) -> dict[str, dict]:
 
     Example
     -------
-    >>> from dandi.dandiapi import DandiAPIClient
     >>> from nwb_video_widgets import get_dandi_video_info
-    >>> client = DandiAPIClient()
-    >>> dandiset = client.get_dandiset("000409", "0.260309.1324")
-    >>> asset = dandiset.get_asset_by_path("sub-NYU-46/sub-NYU-46_ses-..._desc-raw_ecephys.nwb")
-    >>> info = get_dandi_video_info(asset)
+    >>> info = get_dandi_video_info(url="https://api.dandiarchive.org/api/dandisets/000409/versions/draft/assets/?path=sub-NYU-46/...nwb")
     >>> info["VideoBodyCamera"]
     {'url': 'https://dandiarchive.s3.amazonaws.com/...', 'start': 6.57, 'end': 4030.42}
     """
+    if asset is None and url is None:
+        raise ValueError("Either asset or url must be provided")
+
+    if asset is None:
+        from dandi.dandiarchive import parse_dandi_url
+
+        parsed = parse_dandi_url(url)
+        client = parsed.get_client()
+        if token:
+            client.dandi_authenticate(token)
+        assets = list(parsed.get_assets(client))
+        if not assets:
+            raise ValueError(f"No asset found at {url}")
+        asset = assets[0]
+
     auth_header = asset.client.session.headers.get("Authorization", "")
     api_key = auth_header[6:] if auth_header.startswith("token ") else ""
 
