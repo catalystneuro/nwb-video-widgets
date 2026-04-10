@@ -134,6 +134,10 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     # Python observes this and falls back to loading pose data via the Python path.
     _pose_lindi_failed = traitlets.Bool(False).tag(sync=True)
 
+    # Benchmarking: JS timestamps (ms) for camera-switch-to-render latency.
+    _bench_switch_start = traitlets.Float(0.0).tag(sync=True)
+    _bench_switch_end = traitlets.Float(0.0).tag(sync=True)
+
     _esm = pathlib.Path(__file__).parent / "pose_widget.js"
     _css = pathlib.Path(__file__).parent / "pose_widget.css"
 
@@ -337,7 +341,9 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
         # When LINDI paths are available and LINDI hasn't failed, JS loads
         # pose data directly from S3. Python only provides metadata.
-        if self._pose_series_paths and not self._pose_lindi_failed:
+        # If _lindi_failed is set (video LINDI 404), pose LINDI will also fail
+        # since they share the same LINDI JSON, so skip straight to Python.
+        if self._pose_series_paths and not self._pose_lindi_failed and not self._lindi_failed:
             # Set visible_keypoints from precomputed metadata
             metadata = self._keypoint_metadata.get(camera_name, {})
             new_keypoints = {**self.visible_keypoints}
