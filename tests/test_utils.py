@@ -8,6 +8,7 @@ from pynwb.testing.mock.file import mock_NWBFile
 from nwb_video_widgets._utils import (
     BROWSER_COMPATIBLE_CODECS,
     detect_video_codec,
+    discover_pose_estimation_cameras,
     discover_video_series,
     get_video_info,
     get_video_timestamps,
@@ -74,6 +75,32 @@ class TestDiscoverVideoSeries:
         assert len(result) == 2
         assert "VideoLeft" in result
         assert "VideoRight" in result
+
+
+class TestDiscoverPoseEstimationCameras:
+    """Tests for discovering PoseEstimation containers across processing modules."""
+
+    def test_unique_names_use_short_keys(self, nwbfile_with_single_camera_pose):
+        """Test that unique PoseEstimation names use the container name as key."""
+        result = discover_pose_estimation_cameras(nwbfile_with_single_camera_pose)
+        assert "LeftCamera" in result
+        assert len(result) == 1
+
+    def test_duplicate_names_disambiguated_with_module_prefix(self, nwbfile_with_duplicate_pose_names):
+        """Test that duplicate PoseEstimation names are prefixed with the module name."""
+        result = discover_pose_estimation_cameras(nwbfile_with_duplicate_pose_names)
+
+        assert len(result) == 4
+        assert "behavior/body_video_keypoints" in result
+        assert "downsampled/body_video_keypoints" in result
+        assert "behavior/eye_video_keypoints" in result
+        assert "downsampled/eye_video_keypoints" in result
+
+    def test_mixed_unique_and_duplicate_names(self, nwbfile_with_behavior_module_pose):
+        """Test that unique names remain unprefixed even when other containers exist."""
+        result = discover_pose_estimation_cameras(nwbfile_with_behavior_module_pose)
+        assert "LeftCamera" in result
+        assert len(result) == 1
 
 
 class TestGetVideoTimestamps:

@@ -10,6 +10,7 @@ from pynwb import NWBHDF5IO, read_nwb
 from nwb_video_widgets.testing.synthetic_nwb import (
     create_nwbfile_with_external_videos,
     create_nwbfile_with_pose_estimation,
+    create_nwbfile_with_pose_estimation_multi_module,
     create_nwbfile_with_videos_and_pose,
 )
 
@@ -198,6 +199,23 @@ def nwbfile_with_videos_and_pose(tmp_path):
         num_frames=30,
     )
     nwb_path = tmp_path / "test_combined.nwb"
+
+    with NWBHDF5IO(nwb_path, "w") as io:
+        io.write(nwbfile)
+
+    return read_nwb(nwb_path)
+
+
+@pytest.fixture
+def nwbfile_with_duplicate_pose_names(tmp_path):
+    """Create an NWB file with PoseEstimation containers that share names across modules."""
+    nwbfile = create_nwbfile_with_pose_estimation_multi_module(
+        camera_names=["body_video_keypoints", "eye_video_keypoints"],
+        module_names=["behavior", "downsampled"],
+        keypoint_names=["Nose", "LeftEar"],
+        num_frames=30,
+    )
+    nwb_path = tmp_path / "test_duplicate_pose.nwb"
 
     with NWBHDF5IO(nwb_path, "w") as io:
         io.write(nwbfile)
