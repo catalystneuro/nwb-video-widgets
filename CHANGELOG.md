@@ -17,6 +17,8 @@
 
 ## Improvements
 
+* DANDI pose widget now loads keypoint coordinates and timestamps directly from S3 via LINDI byte-range requests in JavaScript, bypassing the Python-to-browser JSON serialization path. For large recordings this eliminates ~50 MB of websocket transfer per camera switch. Falls back to the Python path when LINDI data is compressed or unavailable.
+
 # v0.1.6 (2026-04-06)
 
 ## Removals, Deprecations and changes
