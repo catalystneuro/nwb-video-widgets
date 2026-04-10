@@ -1273,14 +1273,6 @@ function render({ model, el }) {
         drawKeypoint(ctx, coord[0] * scaleX, coord[1] * scaleY, metadata[name], showLabels);
       }
     }
-    // Benchmark: record when first render with data completes
-    const benchStart = model.get("_bench_switch_start");
-    if (benchStart > 0 && model.get("_bench_switch_end") === 0) {
-      const elapsed = performance.now() - benchStart;
-      model.set("_bench_switch_end", elapsed);
-      model.save_changes();
-    }
-
     updateTimeLabel(frameIdx);
   }
 
@@ -1377,11 +1369,6 @@ function render({ model, el }) {
   video.addEventListener("timeupdate", drawPose);
 
   model.on("change:selected_camera", async () => {
-    // Benchmark: record when camera switch starts
-    model.set("_bench_switch_start", performance.now());
-    model.set("_bench_switch_end", 0);
-    model.save_changes();
-
     if (isPlaying) {
       video.pause();
       updatePlayPauseIcon(false);
