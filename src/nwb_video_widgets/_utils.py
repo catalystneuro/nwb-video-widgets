@@ -586,8 +586,17 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
     cameras = {}
     for obj in nwbfile.objects.values():
         if obj.neurodata_type == "PoseEstimation":
-            assert obj.name not in cameras, f"Duplicate PoseEstimation name found: {obj.name}"
-            cameras[obj.name] = obj
+            key = obj.name
+            if key in cameras:
+                # Disambiguate by prepending the processing module name:
+                # "body_video_keypoints" -> "behavior/body_video_keypoints"
+                module_name = obj.parent.name if obj.parent else ""
+                key = f"{module_name}/{obj.name}"
+                # Also rename the existing entry
+                existing = cameras.pop(obj.name)
+                existing_module = existing.parent.name if existing.parent else ""
+                cameras[f"{existing_module}/{existing.name}"] = existing
+            cameras[key] = obj
     return cameras
 
 
