@@ -210,10 +210,22 @@ def discover_video_series(nwbfile: NWBFile) -> dict[str, ImageSeries]:
         Mapping of series names to ImageSeries objects that have external_file
     """
     video_series = {}
-    for name, obj in nwbfile.acquisition.items():
+    duplicated_names: set[str] = set()
+    for obj in nwbfile.objects.values():
         if isinstance(obj, ImageSeries) and obj.external_file is not None:
-            video_series[name] = obj
-    return video_series
+            if obj.name in video_series:
+                duplicated_names.add(obj.name)
+            video_series.setdefault(obj.name, []).append(obj)
+
+    result = {}
+    for name, containers in video_series.items():
+        if name in duplicated_names:
+            for obj in containers:
+                module_name = obj.parent.name if obj.parent else ""
+                result[f"{module_name}/{obj.name}"] = obj
+        else:
+            result[name] = containers[0]
+    return result
 
 
 def get_video_timestamps(nwbfile: NWBFile) -> dict[str, list[float]]:

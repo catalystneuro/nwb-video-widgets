@@ -9,6 +9,7 @@
 ## Bug Fixes
 
 * Fixed crash when NWB files contain PoseEstimation containers with the same name in different processing modules (e.g. dandiset 001425). Duplicate names are now disambiguated with a `module/name` prefix. [PR #40](https://github.com/catalystneuro/nwb-video-widgets/pull/40)
+* `discover_video_series()` now searches all NWB objects instead of only `acquisition`, so ImageSeries stored in processing modules or other containers are discovered. Duplicate names are disambiguated with the same `parent/name` pattern. [PR #40](https://github.com/catalystneuro/nwb-video-widgets/pull/40)
 * Fixed `get_dandi_video_info()` returning empty results for NWB files created on Windows. The `external_file` paths in these files use backslashes (e.g. dandiset 001771), which failed to match DANDI's forward-slash asset paths. [PR #38](https://github.com/catalystneuro/nwb-video-widgets/pull/38)
 
 ## Features

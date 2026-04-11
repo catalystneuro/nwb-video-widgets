@@ -76,6 +76,56 @@ class TestDiscoverVideoSeries:
         assert "VideoLeft" in result
         assert "VideoRight" in result
 
+    def test_discover_series_in_stimulus(self):
+        """Test discovery of ImageSeries stored in stimulus."""
+        nwbfile = mock_NWBFile()
+
+        image_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video.mp4"],
+            starting_time=0.0,
+            rate=30.0,
+        )
+        nwbfile.add_stimulus(image_series)
+
+        result = discover_video_series(nwbfile)
+
+        assert len(result) == 1
+        assert "VideoCamera" in result
+
+    def test_duplicate_names_across_acquisition_and_processing(self):
+        """Test that duplicate ImageSeries names are disambiguated with parent prefix."""
+        from pynwb import ProcessingModule
+
+        nwbfile = mock_NWBFile()
+
+        acq_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video_acq.mp4"],
+            starting_time=0.0,
+            rate=30.0,
+        )
+        nwbfile.add_acquisition(acq_series)
+
+        proc_module = ProcessingModule(name="video_processing", description="processed videos")
+        nwbfile.add_processing_module(proc_module)
+        proc_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video_proc.mp4"],
+            starting_time=0.0,
+            rate=30.0,
+        )
+        proc_module.add(proc_series)
+
+        result = discover_video_series(nwbfile)
+
+        assert len(result) == 2
+        assert "root/VideoCamera" in result
+        assert "video_processing/VideoCamera" in result
+
 
 class TestDiscoverPoseEstimationCameras:
     """Tests for discovering PoseEstimation containers across processing modules."""

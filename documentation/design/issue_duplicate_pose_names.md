@@ -15,18 +15,18 @@ processing/downsampled/face_video_keypoints   (PoseEstimation)
 
 ## Solution
 
-A two-pass approach in `discover_pose_estimation_cameras()`:
+Both `discover_pose_estimation_cameras()` and `discover_video_series()` use the same two-pass approach:
 
-1. First pass groups all PoseEstimation objects by `obj.name` and records which names appear more than once.
-2. Second pass builds the result dict. Duplicated names are prefixed with their parent module (`behavior/body_video_keypoints`, `downsampled/body_video_keypoints`). Unique names keep their short key, so datasets without duplicates are unaffected.
+1. First pass iterates `nwbfile.objects.values()`, groups matching objects by `obj.name`, and records which names appear more than once.
+2. Second pass builds the result dict. Duplicated names are prefixed with their parent container name (`behavior/body_video_keypoints`, `downsampled/body_video_keypoints`). Unique names keep their short key, so datasets without duplicates are unaffected.
 
-Downstream consumers (`get_pose_estimation_info`, `get_camera_to_video_mapping`, both widget classes) iterate over whatever keys `discover_pose_estimation_cameras()` returns, so they required no changes.
+Downstream consumers iterate over whatever keys the discovery functions return, so they required no changes.
 
-## Why only pose estimation, not videos
+## Videos
 
-`discover_video_series()` searches only within `nwbfile.acquisition`, which is a single NWB namespace where item names are unique by construction. A survey of DANDI conducted in April 2026 confirmed that every `ImageSeries.external_file` found across dandisets was in `/acquisition`. There is no real-world case of duplicate video names today.
+`discover_video_series()` previously searched only within `nwbfile.acquisition`, which is a single NWB namespace where item names are unique by construction. A survey of DANDI conducted in April 2026 confirmed that every `ImageSeries.external_file` found across dandisets was in `/acquisition`. There is no real-world case of duplicate video names today.
 
-The disambiguation logic itself is cheap (two dict passes), so if videos ever appear in multiple containers we can add the same pattern to `discover_video_series()` without performance concerns.
+We expanded the search to `nwbfile.objects` with the same disambiguation logic anyway. The cost is negligible (two dict passes), and it ensures videos stored outside acquisition (e.g. in processing modules) are discovered correctly if that pattern ever appears in the wild.
 
 ## Test dataset
 
