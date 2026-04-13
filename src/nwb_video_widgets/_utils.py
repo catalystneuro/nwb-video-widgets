@@ -199,6 +199,13 @@ def validate_video_codec(video_path: Path) -> None:
 def discover_video_series(nwbfile: NWBFile) -> dict[str, ImageSeries]:
     """Discover all ImageSeries with external video files in an NWB file.
 
+    Searches all objects in the file (not just ``acquisition``) so ImageSeries
+    stored in processing modules or other containers are found. If two series
+    share a name (e.g. in different modules), keys are disambiguated as
+    ``parent_name/series_name``. A DANDI survey (April 2026) found all
+    external-file ImageSeries in ``/acquisition``, but this is defensive
+    against future files that store them elsewhere.
+
     Parameters
     ----------
     nwbfile : NWBFile
@@ -583,7 +590,10 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
 
     Searches all objects in the file regardless of where they are stored,
     so PoseEstimation data in any processing module (e.g. 'pose_estimation',
-    'behavior') is found.
+    'behavior') is found. If two containers share a name (e.g. in different
+    modules), keys are disambiguated as ``parent_name/container_name``
+    (e.g. dandiset 001425 has identical names in ``behavior`` and
+    ``downsampled`` modules).
 
     Parameters
     ----------
