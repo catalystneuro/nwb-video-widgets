@@ -624,37 +624,6 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
     return result
 
 
-def get_camera_to_video_mapping(nwbfile: NWBFile) -> dict[str, str]:
-    """Auto-map pose estimation camera names to video series names.
-
-    Uses the naming convention: camera name prefixed with "Video"
-    - 'LeftCamera' -> 'VideoLeftCamera'
-    - 'BodyCamera' -> 'VideoBodyCamera'
-
-    Only returns mappings where both the camera and corresponding video exist.
-
-    Parameters
-    ----------
-    nwbfile : NWBFile
-        NWB file containing pose estimation and video data
-
-    Returns
-    -------
-    dict[str, str]
-        Mapping from camera names to video series names
-    """
-    cameras = discover_pose_estimation_cameras(nwbfile)
-    video_series = discover_video_series(nwbfile)
-
-    mapping = {}
-    for camera_name in cameras:
-        video_name = f"Video{camera_name}"
-        if video_name in video_series:
-            mapping[camera_name] = video_name
-
-    return mapping
-
-
 def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:
     """Extract pose estimation info for all cameras in an NWB file.
 
