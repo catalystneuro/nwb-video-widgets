@@ -19,6 +19,8 @@
 
 ## Improvements
 
+* Removed unused `get_camera_to_video_mapping()` from `_utils.py` and empty `_on_camera_to_video_changed()` observer from `LocalPoseWidget`. [PR #41](https://github.com/catalystneuro/nwb-video-widgets/pull/41)
+
 # v0.1.6 (2026-04-06)
 
 ## Removals, Deprecations and changes
