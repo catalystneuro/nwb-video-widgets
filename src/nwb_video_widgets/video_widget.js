@@ -150,6 +150,26 @@ function readLindiJson2String(ref) {
 }
 
 /**
+ * Parse a LINDI ref value that should be a JSON object (.zattrs, .zarray, etc).
+ * Handles both older LINDI formats (JSON-encoded string) and newer formats
+ * (inline JSON object).
+ * @param {string | Object} ref - LINDI ref value
+ * @returns {Object | null}
+ */
+function parseLindiJsonRef(ref) {
+  if (ref != null && typeof ref === "object" && !Array.isArray(ref)) {
+    return ref;
+  }
+  const text = lindiRefToString(ref);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read a float64 scalar from a LINDI inline chunk (base64-encoded 8 bytes).
  * @param {string | Array} ref - LINDI ref value
  * @returns {number | null}
@@ -175,15 +195,8 @@ async function readLindiTimestamps(refs, seriesPath) {
   const zarrayRef = refs[seriesPath + "/timestamps/.zarray"];
   if (!zarrayRef) return null;
 
-  const zarrayText = lindiRefToString(zarrayRef);
-  if (!zarrayText) return null;
-
-  let zarray;
-  try {
-    zarray = JSON.parse(zarrayText);
-  } catch {
-    return null;
-  }
+  const zarray = parseLindiJsonRef(zarrayRef);
+  if (!zarray) return null;
 
   const shape = zarray.shape;
   if (!shape || shape.length === 0) return null;
@@ -338,13 +351,8 @@ async function resolveVideoInfo(model) {
     const zattrsRef = refs[acquiPrefix + name + "/.zattrs"];
     if (!zattrsRef) continue;
 
-    let attrs;
-    try {
-      attrs = JSON.parse(lindiRefToString(zattrsRef) || "{}");
-    } catch {
-      continue;
-    }
-    if (attrs.neurodata_type !== "ImageSeries") continue;
+    const attrs = parseLindiJsonRef(zattrsRef);
+    if (!attrs || attrs.neurodata_type !== "ImageSeries") continue;
 
     // Read external_file[0] - the relative path to the video file
     const extFileRef = refs[acquiPrefix + name + "/external_file/0"];
