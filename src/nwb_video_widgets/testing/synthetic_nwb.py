@@ -157,6 +157,83 @@ def create_nwbfile_with_pose_estimation(
     return nwbfile
 
 
+def create_nwbfile_with_pose_estimation_multi_module(
+    camera_names: list[str],
+    module_names: list[str],
+    keypoint_names: list[str],
+    num_frames: int = 30,
+    video_width: int = 160,
+    video_height: int = 120,
+) -> NWBFile:
+    """Create an NWBFile with PoseEstimation containers duplicated across multiple processing modules.
+
+    Each camera name appears once per module, producing duplicate names across modules.
+
+    Parameters
+    ----------
+    camera_names : list[str]
+        Names of cameras (used as PoseEstimation container names).
+    module_names : list[str]
+        Names of processing modules to create.
+    keypoint_names : list[str]
+        Names of keypoints to track.
+    num_frames : int, optional
+        Number of frames of pose data, by default 30.
+    video_width : int, optional
+        Width of the source video in pixels, by default 160.
+    video_height : int, optional
+        Height of the source video in pixels, by default 120.
+
+    Returns
+    -------
+    NWBFile
+        NWB file with pose estimation in multiple processing modules.
+    """
+    nwbfile = mock_NWBFile()
+
+    timestamps = np.linspace(0.0, 1.0, num_frames)
+    frame_indices = np.arange(num_frames)
+    circle_x = video_width * (0.2 + 0.6 * frame_indices / num_frames)
+    circle_y = np.full(num_frames, video_height / 2)
+    noise_scale = max(1, int(video_width * 0.01))
+
+    for module_name in module_names:
+        pose_module = ProcessingModule(
+            name=module_name,
+            description=f"Pose estimation data ({module_name})",
+        )
+        nwbfile.add_processing_module(pose_module)
+
+        for camera_name in camera_names:
+            pose_series_list = []
+            for index, keypoint_name in enumerate(keypoint_names):
+                x_offset = index * int(video_width * 0.05)
+                y_offset = index * int(video_height * 0.05)
+                x_coords = circle_x + x_offset + np.random.randn(num_frames) * noise_scale
+                y_coords = circle_y + y_offset + np.random.randn(num_frames) * noise_scale
+                data = np.column_stack([x_coords, y_coords])
+
+                series = PoseEstimationSeries(
+                    name=f"{keypoint_name}PoseEstimationSeries",
+                    data=data,
+                    unit="pixels",
+                    reference_frame="top-left corner",
+                    timestamps=timestamps,
+                    confidence=np.random.rand(num_frames),
+                )
+                pose_series_list.append(series)
+
+            pose_estimation = PoseEstimation(
+                name=camera_name,
+                pose_estimation_series=pose_series_list,
+                description=f"Pose estimation for {camera_name}",
+                dimensions=np.array([[video_width, video_height]], dtype="uint16"),
+            )
+            pose_module.add(pose_estimation)
+
+    return nwbfile
+
+
 def create_nwbfile_with_videos_and_pose(
     video_paths: dict[str, Path],
     camera_names: list[str],

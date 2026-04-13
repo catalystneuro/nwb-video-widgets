@@ -8,6 +8,7 @@ from pynwb.testing.mock.file import mock_NWBFile
 from nwb_video_widgets._utils import (
     BROWSER_COMPATIBLE_CODECS,
     detect_video_codec,
+    discover_pose_estimation_cameras,
     discover_video_series,
     get_video_info,
     get_video_timestamps,
@@ -74,6 +75,82 @@ class TestDiscoverVideoSeries:
         assert len(result) == 2
         assert "VideoLeft" in result
         assert "VideoRight" in result
+
+    def test_discover_series_in_stimulus(self):
+        """Test discovery of ImageSeries stored in stimulus."""
+        nwbfile = mock_NWBFile()
+
+        image_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video.mp4"],
+            starting_time=0.0,
+            rate=30.0,
+        )
+        nwbfile.add_stimulus(image_series)
+
+        result = discover_video_series(nwbfile)
+
+        assert len(result) == 1
+        assert "VideoCamera" in result
+
+    def test_duplicate_names_across_acquisition_and_processing(self):
+        """Test that duplicate ImageSeries names are disambiguated with parent prefix."""
+        from pynwb import ProcessingModule
+
+        nwbfile = mock_NWBFile()
+
+        acq_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video_acq.mp4"],
+            starting_time=0.0,
+            rate=30.0,
+        )
+        nwbfile.add_acquisition(acq_series)
+
+        proc_module = ProcessingModule(name="video_processing", description="processed videos")
+        nwbfile.add_processing_module(proc_module)
+        proc_series = ImageSeries(
+            name="VideoCamera",
+            format="external",
+            external_file=["./video_proc.mp4"],
+            starting_time=0.0,
+            rate=30.0,
+        )
+        proc_module.add(proc_series)
+
+        result = discover_video_series(nwbfile)
+
+        assert len(result) == 2
+        assert "root/VideoCamera" in result
+        assert "video_processing/VideoCamera" in result
+
+
+class TestDiscoverPoseEstimationCameras:
+    """Tests for discovering PoseEstimation containers across processing modules."""
+
+    def test_unique_names_use_short_keys(self, nwbfile_with_single_camera_pose):
+        """Test that unique PoseEstimation names use the container name as key."""
+        result = discover_pose_estimation_cameras(nwbfile_with_single_camera_pose)
+        assert "LeftCamera" in result
+        assert len(result) == 1
+
+    def test_duplicate_names_disambiguated_with_module_prefix(self, nwbfile_with_duplicate_pose_names):
+        """Test that duplicate PoseEstimation names are prefixed with the module name."""
+        result = discover_pose_estimation_cameras(nwbfile_with_duplicate_pose_names)
+
+        assert len(result) == 4
+        assert "behavior/body_video_keypoints" in result
+        assert "downsampled/body_video_keypoints" in result
+        assert "behavior/eye_video_keypoints" in result
+        assert "downsampled/eye_video_keypoints" in result
+
+    def test_mixed_unique_and_duplicate_names(self, nwbfile_with_behavior_module_pose):
+        """Test that unique names remain unprefixed even when other containers exist."""
+        result = discover_pose_estimation_cameras(nwbfile_with_behavior_module_pose)
+        assert "LeftCamera" in result
+        assert len(result) == 1
 
 
 class TestGetVideoTimestamps:

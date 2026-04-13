@@ -199,6 +199,13 @@ def validate_video_codec(video_path: Path) -> None:
 def discover_video_series(nwbfile: NWBFile) -> dict[str, ImageSeries]:
     """Discover all ImageSeries with external video files in an NWB file.
 
+    Searches all objects in the file (not just ``acquisition``) so ImageSeries
+    stored in processing modules or other containers are found. If two series
+    share a name (e.g. in different modules), keys are disambiguated as
+    ``parent_name/series_name``. A DANDI survey (April 2026) found all
+    external-file ImageSeries in ``/acquisition``, but this is defensive
+    against future files that store them elsewhere.
+
     Parameters
     ----------
     nwbfile : NWBFile
@@ -210,10 +217,22 @@ def discover_video_series(nwbfile: NWBFile) -> dict[str, ImageSeries]:
         Mapping of series names to ImageSeries objects that have external_file
     """
     video_series = {}
-    for name, obj in nwbfile.acquisition.items():
+    duplicated_names: set[str] = set()
+    for obj in nwbfile.objects.values():
         if isinstance(obj, ImageSeries) and obj.external_file is not None:
-            video_series[name] = obj
-    return video_series
+            if obj.name in video_series:
+                duplicated_names.add(obj.name)
+            video_series.setdefault(obj.name, []).append(obj)
+
+    result = {}
+    for name, containers in video_series.items():
+        if name in duplicated_names:
+            for obj in containers:
+                module_name = obj.parent.name if obj.parent else ""
+                result[f"{module_name}/{obj.name}"] = obj
+        else:
+            result[name] = containers[0]
+    return result
 
 
 def get_video_timestamps(nwbfile: NWBFile) -> dict[str, list[float]]:
@@ -571,7 +590,10 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
 
     Searches all objects in the file regardless of where they are stored,
     so PoseEstimation data in any processing module (e.g. 'pose_estimation',
-    'behavior') is found.
+    'behavior') is found. If two containers share a name (e.g. in different
+    modules), keys are disambiguated as ``parent_name/container_name``
+    (e.g. dandiset 001425 has identical names in ``behavior`` and
+    ``downsampled`` modules).
 
     Parameters
     ----------
@@ -584,51 +606,22 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
         Mapping of camera names to PoseEstimation objects.
     """
     cameras = {}
+    duplicated_names: set[str] = set()
     for obj in nwbfile.objects.values():
         if obj.neurodata_type == "PoseEstimation":
-            key = obj.name
-            if key in cameras:
-                # Disambiguate by prepending the processing module name:
-                # "body_video_keypoints" -> "behavior/body_video_keypoints"
+            if obj.name in cameras:
+                duplicated_names.add(obj.name)
+            cameras.setdefault(obj.name, []).append(obj)
+
+    result = {}
+    for name, containers in cameras.items():
+        if name in duplicated_names:
+            for obj in containers:
                 module_name = obj.parent.name if obj.parent else ""
-                key = f"{module_name}/{obj.name}"
-                # Also rename the existing entry
-                existing = cameras.pop(obj.name)
-                existing_module = existing.parent.name if existing.parent else ""
-                cameras[f"{existing_module}/{existing.name}"] = existing
-            cameras[key] = obj
-    return cameras
-
-
-def get_camera_to_video_mapping(nwbfile: NWBFile) -> dict[str, str]:
-    """Auto-map pose estimation camera names to video series names.
-
-    Uses the naming convention: camera name prefixed with "Video"
-    - 'LeftCamera' -> 'VideoLeftCamera'
-    - 'BodyCamera' -> 'VideoBodyCamera'
-
-    Only returns mappings where both the camera and corresponding video exist.
-
-    Parameters
-    ----------
-    nwbfile : NWBFile
-        NWB file containing pose estimation and video data
-
-    Returns
-    -------
-    dict[str, str]
-        Mapping from camera names to video series names
-    """
-    cameras = discover_pose_estimation_cameras(nwbfile)
-    video_series = discover_video_series(nwbfile)
-
-    mapping = {}
-    for camera_name in cameras:
-        video_name = f"Video{camera_name}"
-        if video_name in video_series:
-            mapping[camera_name] = video_name
-
-    return mapping
+                result[f"{module_name}/{obj.name}"] = obj
+        else:
+            result[name] = containers[0]
+    return result
 
 
 def get_pose_estimation_info(nwbfile: NWBFile) -> dict[str, dict]:

@@ -220,13 +220,6 @@ class NWBLocalPoseEstimationWidget(anywidget.AnyWidget):
 
         return info
 
-    @traitlets.observe("camera_to_video")
-    def _on_camera_to_video_changed(self, change):
-        """Update video URL when user changes camera-to-video mapping."""
-        # The camera_to_video dict now stores video URLs directly
-        # This observer can be used for any side effects needed
-        pass
-
     @staticmethod
     def _get_video_urls_from_local(nwbfile: NWBFile) -> dict[str, str]:
         """Extract video file URLs from a local NWB file.

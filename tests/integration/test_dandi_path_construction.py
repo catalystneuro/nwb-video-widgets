@@ -132,6 +132,35 @@ def test_get_dandi_video_info_from_url():
 
 
 @pytest.mark.integration
+def test_duplicate_pose_estimation_names():
+    """Regression: NWB files with duplicate PoseEstimation names across processing modules.
+
+    Dandiset 001425 (BraiDyn-BC) has PoseEstimation containers with the same
+    names in both 'behavior' and 'downsampled' processing modules. The widget
+    must disambiguate them with module/name prefixes instead of crashing.
+    """
+    from dandi.dandiapi import DandiAPIClient
+
+    client = DandiAPIClient()
+    dandiset = client.get_dandiset("001425", "draft")
+    asset = dandiset.get_asset_by_path("sub-VG1-GC#51/sub-VG1-GC#51_ses-2023-06-29-task-day11_widefield+behavior.nwb")
+
+    widget = NWBDANDIPoseEstimationWidget(asset=asset)
+
+    # All 6 containers should be discovered (3 camera names x 2 modules)
+    assert len(widget.available_cameras) == 6
+
+    # Each camera should be prefixed with its module name
+    for camera in widget.available_cameras:
+        assert "/" in camera, f"Expected module/name format, got: {camera}"
+
+    # Both modules should be represented
+    modules = {camera.split("/")[0] for camera in widget.available_cameras}
+    assert "behavior" in modules
+    assert "downsampled" in modules
+
+
+@pytest.mark.integration
 def test_get_dandi_video_info_windows_backslash_paths():
     """Regression: NWB files created on Windows have backslashes in external_file paths.
 
