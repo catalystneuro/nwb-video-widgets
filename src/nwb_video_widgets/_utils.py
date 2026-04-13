@@ -210,10 +210,22 @@ def discover_video_series(nwbfile: NWBFile) -> dict[str, ImageSeries]:
         Mapping of series names to ImageSeries objects that have external_file
     """
     video_series = {}
-    for name, obj in nwbfile.acquisition.items():
+    duplicated_names: set[str] = set()
+    for obj in nwbfile.objects.values():
         if isinstance(obj, ImageSeries) and obj.external_file is not None:
-            video_series[name] = obj
-    return video_series
+            if obj.name in video_series:
+                duplicated_names.add(obj.name)
+            video_series.setdefault(obj.name, []).append(obj)
+
+    result = {}
+    for name, containers in video_series.items():
+        if name in duplicated_names:
+            for obj in containers:
+                module_name = obj.parent.name if obj.parent else ""
+                result[f"{module_name}/{obj.name}"] = obj
+        else:
+            result[name] = containers[0]
+    return result
 
 
 def get_video_timestamps(nwbfile: NWBFile) -> dict[str, list[float]]:
@@ -584,11 +596,22 @@ def discover_pose_estimation_cameras(nwbfile: NWBFile) -> dict:
         Mapping of camera names to PoseEstimation objects.
     """
     cameras = {}
+    duplicated_names: set[str] = set()
     for obj in nwbfile.objects.values():
         if obj.neurodata_type == "PoseEstimation":
-            assert obj.name not in cameras, f"Duplicate PoseEstimation name found: {obj.name}"
-            cameras[obj.name] = obj
-    return cameras
+            if obj.name in cameras:
+                duplicated_names.add(obj.name)
+            cameras.setdefault(obj.name, []).append(obj)
+
+    result = {}
+    for name, containers in cameras.items():
+        if name in duplicated_names:
+            for obj in containers:
+                module_name = obj.parent.name if obj.parent else ""
+                result[f"{module_name}/{obj.name}"] = obj
+        else:
+            result[name] = containers[0]
+    return result
 
 
 def get_camera_to_video_mapping(nwbfile: NWBFile) -> dict[str, str]:

@@ -203,6 +203,28 @@ class TestProcessingModuleLocation:
         assert "LeftCamera" in widget.available_cameras
         assert "RightCamera" in widget.available_cameras
 
+    def test_duplicate_pose_names_across_modules(self, nwbfile_with_duplicate_pose_names):
+        """Duplicate PoseEstimation names across modules are disambiguated."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_duplicate_pose_names)
+        assert len(widget.available_cameras) == 4
+
+        for camera in widget.available_cameras:
+            assert "/" in camera
+
+        modules = {camera.split("/")[0] for camera in widget.available_cameras}
+        assert "behavior" in modules
+        assert "downsampled" in modules
+
+    def test_duplicate_pose_names_data_loads(self, nwbfile_with_duplicate_pose_names):
+        """Pose data loads correctly when using disambiguated module/name keys."""
+        widget = NWBLocalPoseEstimationWidget(nwbfile_with_duplicate_pose_names)
+        widget.selected_camera = "behavior/body_video_keypoints"
+
+        assert "behavior/body_video_keypoints" in widget.all_camera_data
+        camera_data = widget.all_camera_data["behavior/body_video_keypoints"]
+        assert "keypoint_metadata" in camera_data
+        assert "Nose" in camera_data["keypoint_metadata"]
+
 
 class TestRateBasedTimestamps:
     """Regression tests for PoseEstimationSeries with starting_time and rate."""
