@@ -277,14 +277,335 @@ async function readLindiSeriesTiming(refs, seriesPath) {
   return { start: 0, end: 0 };
 }
 
+// ============ LINDI ARRAY READING ============
+// These functions read full numeric arrays from LINDI refs via byte-range requests.
+// Ported from Neurosift's lindiDatasetDataLoader.ts, simplified for 1D and 2D float64/float32.
+
+/**
+ * Parse .zarray metadata for a LINDI dataset.
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} datasetPath - e.g. "processing/.../data"
+ * @returns {{shape: number[], chunks: number[], dtype: string, compressor: object|null, filters: Array|null}|null}
+ */
+function readLindiZarray(refs, datasetPath) {
+  return parseLindiJsonRef(refs[datasetPath + "/.zarray"]);
+}
+
+/**
+ * Read a single chunk from LINDI refs, handling inline base64 and range references.
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} chunkPath - e.g. "processing/.../data/0.0"
+ * @param {Object} [templates] - The lindi.templates object for URL expansion
+ * @param {Object} [options] - Optional {startByte, endByte} for partial reads
+ * @param {AbortSignal} [signal] - AbortController signal for cancellation
+ * @returns {Promise<ArrayBuffer|null>}
+ */
+async function readLindiChunk(refs, chunkPath, templates, options, signal) {
+  const ref = refs[chunkPath];
+  if (!ref) return null;
+
+  if (typeof ref === "string") {
+    // Inline data: base64-encoded or plain string
+    let buf;
+    if (ref.startsWith("base64:")) {
+      const binary = atob(ref.slice(7));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      buf = bytes.buffer;
+    } else {
+      buf = new TextEncoder().encode(ref).buffer;
+    }
+    if (options && options.startByte !== undefined) {
+      buf = buf.slice(options.startByte, options.endByte);
+    }
+    return buf;
+  }
+
+  if (!Array.isArray(ref) || ref.length !== 3) return null;
+
+  let [url, offset, numBytes] = ref;
+  // Apply URL templates: replace {{key}} with template values
+  if (templates) {
+    for (const [key, value] of Object.entries(templates)) {
+      url = url.split("{{" + key + "}}").join(value);
+    }
+  }
+
+  if (options && options.startByte !== undefined) {
+    offset += options.startByte;
+    numBytes = options.endByte - options.startByte;
+  }
+
+  const resp = await fetch(url, {
+    headers: { Range: `bytes=${offset}-${offset + numBytes - 1}` },
+    signal,
+  });
+  if (!resp.ok) return null;
+  return await resp.arrayBuffer();
+}
+
+/**
+ * Get byte size for a numpy dtype string.
+ * @param {string} dtype - e.g. "<f8", "<f4"
+ * @returns {number}
+ */
+function getDtypeByteSize(dtype) {
+  if (dtype === "<f8" || dtype === "<d") return 8;
+  if (dtype === "<f4" || dtype === "<f") return 4;
+  if (dtype === "<i4" || dtype === "<i") return 4;
+  if (dtype === "<i2") return 2;
+  return 8; // default to float64
+}
+
+/**
+ * Create a typed array view from an ArrayBuffer based on dtype.
+ * @param {ArrayBuffer} buf
+ * @param {string} dtype
+ * @returns {Float64Array|Float32Array}
+ */
+function createTypedArray(buf, dtype) {
+  if (dtype === "<f4" || dtype === "<f") return new Float32Array(buf);
+  return new Float64Array(buf); // default for <f8
+}
+
+/**
+ * Decompress a zlib-compressed ArrayBuffer using the browser's DecompressionStream API.
+ * @param {ArrayBuffer} buf - Compressed data
+ * @returns {Promise<ArrayBuffer>} Decompressed data
+ */
+async function decompressZlib(buf) {
+  const ds = new DecompressionStream("deflate");
+  const writer = ds.writable.getWriter();
+  writer.write(new Uint8Array(buf));
+  writer.close();
+  const reader = ds.readable.getReader();
+  const parts = [];
+  let totalLength = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    totalLength += value.length;
+  }
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result.buffer;
+}
+
+/**
+ * Check if the zarray filters are supported for browser-side decompression.
+ * Currently supports: zlib. Returns false for unsupported filters.
+ * @param {Array} filters
+ * @returns {boolean}
+ */
+function hasOnlySupportedFilters(filters) {
+  if (!filters || filters.length === 0) return true;
+  return filters.every((f) => f.id === "zlib");
+}
+
+/**
+ * Read a full numeric array from LINDI refs.
+ * Supports 1D and 2D arrays, single-chunk and multi-chunk.
+ * Handles zlib-filtered data via browser DecompressionStream.
+ * Returns null if data uses unsupported compression.
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} datasetPath - e.g. "processing/.../data"
+ * @param {Object} [templates] - The lindi.templates object
+ * @param {AbortSignal} [signal] - AbortController signal
+ * @returns {Promise<Float64Array|Float32Array|null>}
+ */
+async function readLindiArray(refs, datasetPath, templates, signal) {
+  const zarray = readLindiZarray(refs, datasetPath);
+  if (!zarray) return null;
+
+  const { shape, chunks, dtype, compressor, filters } = zarray;
+  if (!shape || !chunks || !dtype) return null;
+  if (shape.length === 0 || shape.length > 2) return null;
+
+  // Bail out for unsupported compression
+  if (compressor) return null;
+  if (!hasOnlySupportedFilters(filters)) return null;
+
+  const needsDecompress = filters && filters.length > 0;
+
+  const ndims = shape.length;
+  const dtypeSize = getDtypeByteSize(dtype);
+  const totalElements = shape.reduce((a, b) => a * b, 1);
+
+  // Compute chunk grid
+  const macroChunkShape = shape.map((s, i) => Math.ceil(s / chunks[i]));
+  const totalChunks = macroChunkShape.reduce((a, b) => a * b, 1);
+
+  // Helper: fetch a chunk and decompress if needed
+  async function fetchChunk(chunkPath) {
+    const buf = await readLindiChunk(refs, chunkPath, templates, null, signal);
+    if (!buf) return null;
+    return needsDecompress ? await decompressZlib(buf) : buf;
+  }
+
+  if (totalChunks === 1) {
+    // Single chunk fast path: one fetch for the entire dataset
+    let chunkPath = datasetPath + "/0";
+    for (let i = 1; i < ndims; i++) chunkPath += ".0";
+
+    const buf = await fetchChunk(chunkPath);
+    if (!buf) return null;
+    return createTypedArray(buf, dtype);
+  }
+
+  // Multi-chunk: fetch all chunks in parallel and concatenate
+  const resultBuf = new ArrayBuffer(totalElements * dtypeSize);
+  const result = createTypedArray(resultBuf, dtype);
+
+  if (ndims === 1) {
+    const nChunks = macroChunkShape[0];
+    const chunkPromises = [];
+    for (let ci = 0; ci < nChunks; ci++) {
+      chunkPromises.push(fetchChunk(datasetPath + "/" + ci));
+    }
+    const chunkBuffers = await Promise.all(chunkPromises);
+    let offset = 0;
+    for (let ci = 0; ci < nChunks; ci++) {
+      if (!chunkBuffers[ci]) return null;
+      const chunkData = createTypedArray(chunkBuffers[ci], dtype);
+      const elemsToCopy = Math.min(chunkData.length, shape[0] - ci * chunks[0]);
+      result.set(chunkData.subarray(0, elemsToCopy), offset);
+      offset += elemsToCopy;
+    }
+  } else {
+    const nChunks0 = macroChunkShape[0];
+    const nChunks1 = macroChunkShape[1];
+    const chunkPromises = [];
+    const chunkIndices = [];
+    for (let ci0 = 0; ci0 < nChunks0; ci0++) {
+      for (let ci1 = 0; ci1 < nChunks1; ci1++) {
+        chunkIndices.push([ci0, ci1]);
+        chunkPromises.push(fetchChunk(datasetPath + "/" + ci0 + "." + ci1));
+      }
+    }
+    const chunkBuffers = await Promise.all(chunkPromises);
+    for (let i = 0; i < chunkIndices.length; i++) {
+      if (!chunkBuffers[i]) return null;
+      const [ci0, ci1] = chunkIndices[i];
+      const chunkData = createTypedArray(chunkBuffers[i], dtype);
+
+      // Determine the actual region this chunk covers
+      const row0 = ci0 * chunks[0];
+      const col0 = ci1 * chunks[1];
+      const rowEnd = Math.min(row0 + chunks[0], shape[0]);
+      const colEnd = Math.min(col0 + chunks[1], shape[1]);
+      const chunkRows = rowEnd - row0;
+      const chunkCols = colEnd - col0;
+
+      // Copy chunk data into the result array
+      for (let r = 0; r < chunkRows; r++) {
+        const srcOffset = r * chunks[1]; // chunk is stored with its full chunk width
+        const dstOffset = (row0 + r) * shape[1] + col0;
+        for (let c = 0; c < chunkCols; c++) {
+          result[dstOffset + c] = chunkData[srcOffset + c];
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Read the full timestamps array for a pose series from LINDI.
+ * Tries the timestamps dataset first, falls back to starting_time + rate.
+ * @param {Object} refs - The lindi.refs object
+ * @param {string} seriesPath - path to the PoseEstimationSeries
+ * @param {Object} [templates] - The lindi.templates object
+ * @param {AbortSignal} [signal] - AbortController signal
+ * @returns {Promise<Float64Array|null>}
+ */
+async function readLindiFullTimestamps(refs, seriesPath, templates, signal) {
+  // Try reading the timestamps dataset directly
+  const tsArray = await readLindiArray(refs, seriesPath + "/timestamps", templates, signal);
+  if (tsArray) return tsArray instanceof Float64Array ? tsArray : new Float64Array(tsArray);
+
+  // Fall back to starting_time + rate (synthesize timestamps)
+  const zattrs = parseLindiJsonRef(refs[seriesPath + "/.zattrs"]);
+  if (!zattrs) return null;
+
+  // Need to read starting_time scalar and get rate from zattrs
+  const startingTimeRef = refs[seriesPath + "/starting_time/0"];
+  const startingTime = startingTimeRef ? readLindiFloat64(startingTimeRef) : null;
+  if (startingTime === null) return null;
+
+  // Rate is stored in starting_time's zattrs (as "rate" attribute on the starting_time dataset)
+  const stZattrs = parseLindiJsonRef(refs[seriesPath + "/starting_time/.zattrs"]);
+  if (!stZattrs) return null;
+
+  const rate = stZattrs.rate;
+  if (!rate || rate <= 0) return null;
+
+  // Determine number of frames from the data dataset shape
+  const dataZarray = readLindiZarray(refs, seriesPath + "/data");
+  if (!dataZarray || !dataZarray.shape) return null;
+  const nFrames = dataZarray.shape[0];
+
+  const timestamps = new Float64Array(nFrames);
+  for (let i = 0; i < nFrames; i++) {
+    timestamps[i] = startingTime + i / rate;
+  }
+  return timestamps;
+}
+
+// ============ POSE DATA LOADING ============
+
+/**
+ * Load all pose data for a camera from LINDI refs.
+ * Reads keypoint coordinate arrays and timestamps in parallel.
+ * @param {Object} lindi - Parsed LINDI JSON ({refs, templates})
+ * @param {Object} seriesPaths - {shortName: "processing/.../SeriesName"}
+ * @param {AbortSignal} [signal] - AbortController signal
+ * @returns {Promise<{coordinates: Object, timestamps: Float64Array, nFrames: number}|null>}
+ *   coordinates maps shortName -> Float64Array (flat, n_frames * 2)
+ *   Returns null if any dataset is compressed or reading fails.
+ */
+async function loadCameraPoseDataFromLindi(lindi, seriesPaths, signal) {
+  const refs = lindi.refs;
+  const templates = lindi.templates;
+  const names = Object.keys(seriesPaths);
+  if (names.length === 0) return null;
+
+  // Read all keypoint data arrays and timestamps in parallel
+  const dataPromises = names.map((name) =>
+    readLindiArray(refs, seriesPaths[name] + "/data", templates, signal),
+  );
+  const timestampsPromise = readLindiFullTimestamps(refs, seriesPaths[names[0]], templates, signal);
+
+  const results = await Promise.all([...dataPromises, timestampsPromise]);
+  const timestamps = results[results.length - 1];
+  if (!timestamps) { console.log("[pose-lindi] timestamps null"); return null; }
+
+  const coordinates = {};
+  for (let i = 0; i < names.length; i++) {
+    if (!results[i]) { console.log("[pose-lindi] null result for", names[i]); return null; }
+    coordinates[names[i]] = results[i];
+  }
+
+  const nFrames = timestamps.length;
+  console.log("[pose-lindi] success:", names.length, "keypoints,", nFrames, "frames");
+  return { coordinates, timestamps, nFrames };
+}
+
 // ============ VIDEO INFO RESOLUTION ============
 
 /**
  * Resolve video info from DANDI via LINDI + DANDI REST API.
  * For the pose widget, uses video_nwb_* seeds if set, falling back to nwb_* seeds.
+ * Also caches the LINDI JSON for reuse by pose data loading.
  * @param {Object} model - anywidget model proxy
+ * @param {Object} state - shared state object for LINDI cache
  */
-async function resolveVideoInfo(model) {
+async function resolveVideoInfo(model, state) {
   const dandisetId = model.get("_dandiset_id");
   const versionId = model.get("_version_id");
   const dandiApiUrl = model.get("_dandi_api_url");
@@ -296,7 +617,10 @@ async function resolveVideoInfo(model) {
   const assetPath =
     model.get("_video_nwb_asset_path") || model.get("_nwb_asset_path");
 
-  if (!dandisetId || !assetId) return;
+  if (!dandisetId || !assetId) {
+    if (state && state._resolveLindiReady) state._resolveLindiReady();
+    return;
+  }
 
   const lindiEnv = dandiApiUrl.includes("sandbox") ? "dandi-staging" : "dandi";
   const lindiUrl =
@@ -317,7 +641,31 @@ async function resolveVideoInfo(model) {
     // LINDI unavailable, signal Python to fall back to targeted h5py reads
     model.set("_lindi_failed", true);
     model.save_changes();
+    if (state && state._resolveLindiReady) state._resolveLindiReady();
     return;
+  }
+
+  // Cache LINDI JSON for video resolution
+  if (state) state.lindiVideo = lindi;
+
+  // For pose data, we need the LINDI for the pose/processed asset (may differ in split-file case).
+  // If video and pose are in the same asset, reuse the same LINDI.
+  const poseAssetId = model.get("_nwb_asset_id");
+  if (poseAssetId && poseAssetId !== assetId) {
+    // Split-file case: fetch separate LINDI for the processed asset
+    const poseLindiUrl =
+      "https://lindi.neurosift.org/" + lindiEnv + "/dandisets/" + dandisetId + "/assets/" + poseAssetId + "/nwb.lindi.json";
+    try {
+      const poseResp = await fetch(poseLindiUrl);
+      if (poseResp.ok) {
+        state.lindi = await poseResp.json();
+      }
+    } catch {
+      // Pose LINDI unavailable, JS pose loading will fail and fall back to Python
+    }
+  } else {
+    // Single-file case: pose and video in the same asset
+    if (state) state.lindi = lindi;
   }
 
   const refs = lindi.refs;
@@ -401,6 +749,9 @@ async function resolveVideoInfo(model) {
   model.set("_video_urls", videoUrls);
   model.set("_video_timing", videoTiming);
   model.save_changes();
+
+  // Signal that LINDI resolution is complete (pose loading may be waiting)
+  if (state && state._resolveLindiReady) state._resolveLindiReady();
 }
 
 /**
@@ -409,6 +760,18 @@ async function resolveVideoInfo(model) {
 function render({ model, el }) {
   const wrapper = document.createElement("div");
   wrapper.classList.add("pose-widget");
+
+  // Shared state for LINDI cache and pose data
+  const sharedState = {
+    lindi: null, // Cached LINDI JSON, populated by resolveVideoInfo
+    lindiReady: null, // Promise resolved when resolveVideoInfo completes
+    _resolveLindiReady: null, // Resolver function, called by resolveVideoInfo
+    lindiPoseCache: {}, // {cameraName: {coordinates, timestamps, nFrames}}
+    poseAbortController: null, // AbortController for in-flight pose loads
+  };
+  sharedState.lindiReady = new Promise((resolve) => {
+    sharedState._resolveLindiReady = resolve;
+  });
 
   // ============ POSE ESTIMATION SELECTION SECTION ============
   const poseSection = document.createElement("div");
@@ -660,10 +1023,35 @@ function render({ model, el }) {
 
   // ============ FUNCTIONS ============
 
+  /**
+   * Get pose data for the currently selected camera.
+   * Returns a normalized object with timestamps, keypoint_metadata, and either
+   * pose_coordinates (Python path) or lindi_coordinates (LINDI path).
+   * @returns {Object|null}
+   */
   function getCurrentCameraData() {
     const camera = model.get("selected_camera");
+    // Check LINDI cache first (binary data loaded directly from S3)
+    const lindiData = sharedState.lindiPoseCache[camera];
+    if (lindiData) {
+      const metadata = (model.get("_keypoint_metadata") || {})[camera] || {};
+      return {
+        source: "lindi",
+        timestamps: lindiData.timestamps,
+        keypoint_metadata: metadata,
+        lindi_coordinates: lindiData.coordinates, // {name: Float64Array} flat pairs
+        nFrames: lindiData.nFrames,
+      };
+    }
+    // Fall back to Python-provided data
     const allData = model.get("all_camera_data");
-    return allData[camera] || null;
+    if (allData[camera]) {
+      return {
+        source: "python",
+        ...allData[camera], // timestamps, keypoint_metadata, pose_coordinates
+      };
+    }
+    return null;
   }
 
   function updateTimeLabel(frameIdx) {
@@ -922,11 +1310,10 @@ function render({ model, el }) {
     if (!data) return;
 
     const metadata = data.keypoint_metadata;
-    const coordinates = data.pose_coordinates;
     const timestamps = data.timestamps;
     const showLabels = model.get("show_labels");
 
-    if (!coordinates || !timestamps || timestamps.length === 0) return;
+    if (!timestamps || timestamps.length === 0) return;
 
     const frameIdx = getFrameIndex();
 
@@ -935,34 +1322,49 @@ function render({ model, el }) {
     const scaleX = DISPLAY_WIDTH / video.videoWidth;
     const scaleY = DISPLAY_HEIGHT / video.videoHeight;
 
-    for (const [name, coords] of Object.entries(coordinates)) {
-      if (visibleKeypoints[name] === false) continue;
-
-      const coord = coords[frameIdx];
-      if (!coord) continue;
-
-      const x = coord[0] * scaleX;
-      const y = coord[1] * scaleY;
-      const kp = metadata[name];
-
-      ctx.beginPath();
-      ctx.arc(x, y, 5, 0, 2 * Math.PI);
-      ctx.fillStyle = kp?.color || "#fff";
-      ctx.fill();
-      ctx.strokeStyle = "#000";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      if (showLabels && kp) {
-        ctx.font = "bold 10px sans-serif";
-        ctx.fillStyle = "#fff";
-        ctx.strokeStyle = "#000";
-        ctx.lineWidth = 2;
-        ctx.strokeText(kp.label, x + 6, y + 3);
-        ctx.fillText(kp.label, x + 6, y + 3);
+    if (data.source === "lindi") {
+      // LINDI path: coordinates are flat Float64Array (pairs of x, y)
+      const coordinates = data.lindi_coordinates;
+      if (!coordinates) return;
+      for (const [name, coords] of Object.entries(coordinates)) {
+        if (visibleKeypoints[name] === false) continue;
+        const offset = frameIdx * 2;
+        const x = coords[offset];
+        const y = coords[offset + 1];
+        if (isNaN(x) || isNaN(y)) continue;
+        drawKeypoint(ctx, x * scaleX, y * scaleY, metadata[name], showLabels);
+      }
+    } else {
+      // Python path: coordinates are nested arrays [[x, y], null, ...]
+      const coordinates = data.pose_coordinates;
+      if (!coordinates) return;
+      for (const [name, coords] of Object.entries(coordinates)) {
+        if (visibleKeypoints[name] === false) continue;
+        const coord = coords[frameIdx];
+        if (!coord) continue;
+        drawKeypoint(ctx, coord[0] * scaleX, coord[1] * scaleY, metadata[name], showLabels);
       }
     }
     updateTimeLabel(frameIdx);
+  }
+
+  function drawKeypoint(ctx, x, y, kp, showLabels) {
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, 2 * Math.PI);
+    ctx.fillStyle = kp?.color || "#fff";
+    ctx.fill();
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    if (showLabels && kp) {
+      ctx.font = "bold 10px sans-serif";
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 2;
+      ctx.strokeText(kp.label, x + 6, y + 3);
+      ctx.fillText(kp.label, x + 6, y + 3);
+    }
   }
 
   function animate() {
@@ -1038,7 +1440,7 @@ function render({ model, el }) {
   video.addEventListener("seeked", drawPose);
   video.addEventListener("timeupdate", drawPose);
 
-  model.on("change:selected_camera", () => {
+  model.on("change:selected_camera", async () => {
     if (isPlaying) {
       video.pause();
       updatePlayPauseIcon(false);
@@ -1047,6 +1449,116 @@ function render({ model, el }) {
     }
     updatePoseList();
     updateVideoSelect();
+
+    // Abort any in-flight LINDI pose load for a previous camera
+    if (sharedState.poseAbortController) {
+      sharedState.poseAbortController.abort();
+      sharedState.poseAbortController = null;
+    }
+
+    const camera = model.get("selected_camera");
+    if (!camera) {
+      switchCamera();
+      return;
+    }
+
+    const loadStart = performance.now();
+
+    function reportLoad(path, camera) {
+      const elapsed = performance.now() - loadStart;
+      model.set("_pose_load_info", { camera, path, elapsed_ms: Math.round(elapsed) });
+      model.save_changes();
+    }
+
+    // If data is already available (LINDI cache or Python), switch immediately
+    if (sharedState.lindiPoseCache[camera]) {
+      reportLoad("lindi_cached", camera);
+      switchCamera();
+      return;
+    }
+    if (model.get("all_camera_data")[camera]) {
+      reportLoad("python_cached", camera);
+      switchCamera();
+      return;
+    }
+
+    // Try loading from LINDI if paths are available and LINDI JSON is cached
+    const seriesPaths = (model.get("_pose_series_paths") || {})[camera];
+    if (seriesPaths && sharedState.lindi) {
+      loadingOverlay.classList.add("pose-widget__loading-overlay--visible");
+      video.style.visibility = "hidden";
+      canvas.style.visibility = "hidden";
+
+      const controller = new AbortController();
+      sharedState.poseAbortController = controller;
+
+      try {
+        const result = await loadCameraPoseDataFromLindi(
+          sharedState.lindi,
+          seriesPaths,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+
+        if (result) {
+          sharedState.lindiPoseCache[camera] = result;
+          reportLoad("lindi", camera);
+          switchCamera();
+          updateLoadingState();
+          return;
+        }
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        // Fall through to Python fallback
+      }
+
+      // LINDI loading failed, signal Python to load data
+      reportLoad("lindi_failed", camera);
+      model.set("_pose_lindi_failed", true);
+      model.save_changes();
+    } else if (seriesPaths && !sharedState.lindi) {
+      // LINDI JSON not fetched yet (resolveVideoInfo still in progress).
+      // Wait for it, then load pose data.
+      loadingOverlay.classList.add("pose-widget__loading-overlay--visible");
+      video.style.visibility = "hidden";
+      canvas.style.visibility = "hidden";
+
+      const controller = new AbortController();
+      sharedState.poseAbortController = controller;
+
+      // Wait for LINDI to become available (resolveVideoInfo sets sharedState.lindi)
+      await sharedState.lindiReady;
+      if (controller.signal.aborted) return;
+
+      if (sharedState.lindi) {
+        try {
+          const result = await loadCameraPoseDataFromLindi(
+            sharedState.lindi,
+            seriesPaths,
+            controller.signal,
+          );
+          if (controller.signal.aborted) return;
+
+          if (result) {
+            sharedState.lindiPoseCache[camera] = result;
+            reportLoad("lindi_after_wait", camera);
+            switchCamera();
+            updateLoadingState();
+            return;
+          }
+        } catch (err) {
+          if (err.name === "AbortError") return;
+        }
+      }
+
+      // LINDI unavailable or loading failed
+      reportLoad("lindi_failed_after_wait", camera);
+      model.set("_pose_lindi_failed", true);
+      model.save_changes();
+    }
+
+    // For non-LINDI path or when waiting for Python fallback, just switch
+    // (Python observer will populate all_camera_data and trigger change event)
     switchCamera();
   });
 
@@ -1146,7 +1658,7 @@ function render({ model, el }) {
   const doResolve = async () => {
     if (videoInfoResolved) return;
     videoInfoResolved = true;
-    await resolveVideoInfo(model);
+    await resolveVideoInfo(model, sharedState);
   };
   doResolve();
 

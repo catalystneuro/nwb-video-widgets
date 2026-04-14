@@ -125,6 +125,18 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     # and falls back to targeted h5py reads.
     _lindi_failed = traitlets.Bool(False).tag(sync=True)
 
+    # Pose LINDI migration: metadata sent at init so JS can load binary data directly from S3.
+    # {camera_name: {short_name: "processing/.../SeriesName"}} - LINDI ref path prefixes
+    _pose_series_paths = traitlets.Dict({}).tag(sync=True)
+    # {camera_name: {short_name: {color: "#hex", label: "name"}}} - precomputed keypoint colors
+    _keypoint_metadata = traitlets.Dict({}).tag(sync=True)
+    # Set to True by JavaScript when LINDI pose reading fails (compressed data, fetch error).
+    # Python observes this and falls back to loading pose data via the Python path.
+    _pose_lindi_failed = traitlets.Bool(False).tag(sync=True)
+
+    # Diagnostics: JS reports which path was used and how long it took.
+    _pose_load_info = traitlets.Dict({}).tag(sync=True)
+
     _esm = pathlib.Path(__file__).parent / "pose_widget.js"
     _css = pathlib.Path(__file__).parent / "pose_widget.css"
 
@@ -180,8 +192,47 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
 
         # Store references for lazy loading (not synced to JS)
         self._pose_containers = pose_containers
-        self._cmap = plt.get_cmap(colormap_name)
+        cmap = plt.get_cmap(colormap_name)
+        self._cmap = cmap
         self._custom_colors = custom_colors
+
+        # Precompute LINDI paths and keypoint metadata for all cameras so JS can
+        # load binary pose data directly from S3 without Python in the loop.
+        pose_series_paths = {}
+        keypoint_metadata = {}
+        for camera_name, container in pose_containers.items():
+            series_items = list(container.pose_estimation_series.items())
+            n_kp = len(series_items)
+            cam_paths = {}
+            cam_metadata = {}
+            for index, (series_name, series) in enumerate(series_items):
+                short_name = series_name.replace("PoseEstimationSeries", "")
+                # Build LINDI path: walk parent chain from series to root.
+                # ProcessingModule lives under "processing/" in HDF5/LINDI but
+                # pynwb's parent chain goes directly to NWBFile, so we prepend it.
+                parts = []
+                obj = series
+                while obj is not None and obj.name != "root":
+                    parts.append(obj.name)
+                    if isinstance(obj.parent, NWBFile) and obj.name != "root":
+                        parts.append("processing")
+                    obj = obj.parent
+                parts.reverse()
+                cam_paths[short_name] = "/".join(parts)
+
+                # Compute color
+                if short_name in custom_colors:
+                    color = custom_colors[short_name]
+                else:
+                    if hasattr(cmap, "N") and cmap.N < 256:
+                        rgba = cmap(index % cmap.N)
+                    else:
+                        rgba = cmap(index / max(n_kp - 1, 1))
+                    color = mcolors.to_hex(rgba)
+                cam_metadata[short_name] = {"color": color, "label": short_name}
+
+            pose_series_paths[camera_name] = cam_paths
+            keypoint_metadata[camera_name] = cam_metadata
 
         # Build video seed kwargs for split-file case
         video_seed_kwargs = {}
@@ -200,6 +251,8 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
             all_camera_data={},
             visible_keypoints={},
             settings_open=True,
+            _pose_series_paths=pose_series_paths,
+            _keypoint_metadata=keypoint_metadata,
             _nwb_url=asset.get_content_url(follow_redirects=1, strip_query=False),
             _nwb_asset_id=asset.identifier,
             _nwb_asset_path=asset.path,
@@ -285,19 +338,35 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
         if not camera_name or camera_name in self.all_camera_data:
             return  # Already loaded or no camera selected
 
-        # Signal loading start
-        self.loading = True
+        # When LINDI paths are available and LINDI hasn't failed, JS loads
+        # pose data directly from S3. Python only provides metadata.
+        # If _lindi_failed is set (video LINDI 404), pose LINDI will also fail
+        # since they share the same LINDI JSON, so skip straight to Python.
+        if self._pose_series_paths and not self._pose_lindi_failed and not self._lindi_failed:
+            # Set visible_keypoints from precomputed metadata
+            metadata = self._keypoint_metadata.get(camera_name, {})
+            new_keypoints = {**self.visible_keypoints}
+            for name in metadata:
+                if name not in new_keypoints:
+                    new_keypoints[name] = True
+            if new_keypoints != self.visible_keypoints:
+                self.visible_keypoints = new_keypoints
+            return
 
+        self._load_camera_pose_data_python(camera_name)
+
+    def _load_camera_pose_data_python(self, camera_name: str):
+        """Load pose data via Python (used when LINDI is unavailable)."""
+        if camera_name in self.all_camera_data:
+            return
+
+        self.loading = True
         try:
-            # Load pose data for this camera
             camera_data = self._load_camera_pose_data(
                 self._pose_containers, camera_name, self._cmap, self._custom_colors
             )
-
-            # Update all_camera_data (must create new dict for traitlets to detect change)
             self.all_camera_data = {**self.all_camera_data, camera_name: camera_data}
 
-            # Add any new keypoints to visible_keypoints
             new_keypoints = {**self.visible_keypoints}
             for name in camera_data["keypoint_metadata"].keys():
                 if name not in new_keypoints:
@@ -305,8 +374,16 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
             if new_keypoints != self.visible_keypoints:
                 self.visible_keypoints = new_keypoints
         finally:
-            # Signal loading complete
             self.loading = False
+
+    @traitlets.observe("_pose_lindi_failed")
+    def _on_pose_lindi_failed(self, change):
+        """Fall back to Python pose loading when JS LINDI reading fails."""
+        if not change["new"]:
+            return
+        camera_name = self.selected_camera
+        if camera_name:
+            self._load_camera_pose_data_python(camera_name)
 
     @staticmethod
     def _load_nwbfile_from_dandi(asset: RemoteAsset) -> NWBFile:
