@@ -74,8 +74,29 @@ function createIcon(type) {
 // ============ LINDI HELPERS ============
 
 /**
+ * Strip a blosc header from a Uint8Array if present.
+ * Blosc frames start with bytes 0x02 0x01 followed by a 16-byte header.
+ * For uncompressed (memcpy) frames where the payload equals nbytes,
+ * returns the raw payload. For actually-compressed frames, returns null
+ * (JS lacks a blosc decompressor).
+ * @param {Uint8Array} bytes - Raw bytes that may have a blosc header
+ * @returns {Uint8Array | null} Payload bytes, or null if compressed
+ */
+function stripBloscHeader(bytes) {
+  if (bytes.length < 16 || bytes[0] !== 0x02 || bytes[1] !== 0x01) {
+    return bytes;
+  }
+  const nbytes = bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24);
+  const payload = bytes.subarray(16);
+  if (payload.length === nbytes) {
+    return payload;
+  }
+  return null;
+}
+
+/**
  * Decode a LINDI ref value to a string.
- * Handles plain strings and base64-encoded strings.
+ * Handles plain strings and base64-encoded strings (with optional blosc header).
  * Returns null for range references (arrays).
  * @param {string | Array} ref
  * @returns {string | null}
@@ -83,14 +104,20 @@ function createIcon(type) {
 function lindiRefToString(ref) {
   if (typeof ref !== "string") return null;
   if (ref.startsWith("base64:")) {
-    return atob(ref.slice(7));
+    const binary = atob(ref.slice(7));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const payload = stripBloscHeader(bytes);
+    if (!payload) return null;
+    return new TextDecoder().decode(payload);
   }
   return ref;
 }
 
 /**
  * Decode a LINDI ref value to a Uint8Array.
- * Handles plain strings (treated as UTF-8) and base64-encoded binary.
+ * Handles plain strings (treated as UTF-8) and base64-encoded binary
+ * (with optional blosc header).
  * Returns null for range references (arrays).
  * @param {string | Array} ref
  * @returns {Uint8Array | null}
@@ -101,7 +128,7 @@ function lindiRefToBytes(ref) {
     const binary = atob(ref.slice(7));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
+    return stripBloscHeader(bytes);
   }
   return new TextEncoder().encode(ref);
 }
