@@ -1,3 +1,13 @@
+# v0.2.0 (Upcoming)
+
+## Removals, Deprecations and changes
+
+## Bug Fixes
+
+## Features
+
+## Improvements
+
 # v0.1.7 (2026-04-14)
 
 ## Removals, Deprecations and changes
