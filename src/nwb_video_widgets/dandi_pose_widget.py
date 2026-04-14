@@ -134,9 +134,8 @@ class NWBDANDIPoseEstimationWidget(anywidget.AnyWidget):
     # Python observes this and falls back to loading pose data via the Python path.
     _pose_lindi_failed = traitlets.Bool(False).tag(sync=True)
 
-    # Benchmarking: JS timestamps (ms) for camera-switch-to-render latency.
-    _bench_switch_start = traitlets.Float(0.0).tag(sync=True)
-    _bench_switch_end = traitlets.Float(0.0).tag(sync=True)
+    # Diagnostics: JS reports which path was used and how long it took.
+    _pose_load_info = traitlets.Dict({}).tag(sync=True)
 
     _esm = pathlib.Path(__file__).parent / "pose_widget.js"
     _css = pathlib.Path(__file__).parent / "pose_widget.css"

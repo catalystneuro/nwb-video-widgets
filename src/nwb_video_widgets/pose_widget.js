@@ -288,15 +288,7 @@ async function readLindiSeriesTiming(refs, seriesPath) {
  * @returns {{shape: number[], chunks: number[], dtype: string, compressor: object|null, filters: Array|null}|null}
  */
 function readLindiZarray(refs, datasetPath) {
-  const zarrayRef = refs[datasetPath + "/.zarray"];
-  if (!zarrayRef) return null;
-  const text = lindiRefToString(zarrayRef);
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
+  return parseLindiJsonRef(refs[datasetPath + "/.zarray"]);
 }
 
 /**
@@ -377,9 +369,49 @@ function createTypedArray(buf, dtype) {
 }
 
 /**
+ * Decompress a zlib-compressed ArrayBuffer using the browser's DecompressionStream API.
+ * @param {ArrayBuffer} buf - Compressed data
+ * @returns {Promise<ArrayBuffer>} Decompressed data
+ */
+async function decompressZlib(buf) {
+  const ds = new DecompressionStream("deflate");
+  const writer = ds.writable.getWriter();
+  writer.write(new Uint8Array(buf));
+  writer.close();
+  const reader = ds.readable.getReader();
+  const parts = [];
+  let totalLength = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    totalLength += value.length;
+  }
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result.buffer;
+}
+
+/**
+ * Check if the zarray filters are supported for browser-side decompression.
+ * Currently supports: zlib. Returns false for unsupported filters.
+ * @param {Array} filters
+ * @returns {boolean}
+ */
+function hasOnlySupportedFilters(filters) {
+  if (!filters || filters.length === 0) return true;
+  return filters.every((f) => f.id === "zlib");
+}
+
+/**
  * Read a full numeric array from LINDI refs.
- * Supports 1D and 2D uncompressed arrays (single-chunk and multi-chunk).
- * Returns null if the data is compressed or reading fails.
+ * Supports 1D and 2D arrays, single-chunk and multi-chunk.
+ * Handles zlib-filtered data via browser DecompressionStream.
+ * Returns null if data uses unsupported compression.
  * @param {Object} refs - The lindi.refs object
  * @param {string} datasetPath - e.g. "processing/.../data"
  * @param {Object} [templates] - The lindi.templates object
@@ -394,9 +426,11 @@ async function readLindiArray(refs, datasetPath, templates, signal) {
   if (!shape || !chunks || !dtype) return null;
   if (shape.length === 0 || shape.length > 2) return null;
 
-  // Bail out for compressed data: caller falls back to Python
+  // Bail out for unsupported compression
   if (compressor) return null;
-  if (filters && filters.length > 0) return null;
+  if (!hasOnlySupportedFilters(filters)) return null;
+
+  const needsDecompress = filters && filters.length > 0;
 
   const ndims = shape.length;
   const dtypeSize = getDtypeByteSize(dtype);
@@ -406,19 +440,24 @@ async function readLindiArray(refs, datasetPath, templates, signal) {
   const macroChunkShape = shape.map((s, i) => Math.ceil(s / chunks[i]));
   const totalChunks = macroChunkShape.reduce((a, b) => a * b, 1);
 
+  // Helper: fetch a chunk and decompress if needed
+  async function fetchChunk(chunkPath) {
+    const buf = await readLindiChunk(refs, chunkPath, templates, null, signal);
+    if (!buf) return null;
+    return needsDecompress ? await decompressZlib(buf) : buf;
+  }
+
   if (totalChunks === 1) {
     // Single chunk fast path: one fetch for the entire dataset
     let chunkPath = datasetPath + "/0";
     for (let i = 1; i < ndims; i++) chunkPath += ".0";
 
-    const buf = await readLindiChunk(refs, chunkPath, templates, null, signal);
+    const buf = await fetchChunk(chunkPath);
     if (!buf) return null;
     return createTypedArray(buf, dtype);
   }
 
   // Multi-chunk: fetch all chunks in parallel and concatenate
-  // For 1D: chunk keys are "0", "1", "2", ...
-  // For 2D with chunks=[K, N2] (chunked along dim 0 only): keys are "0.0", "1.0", ...
   const resultBuf = new ArrayBuffer(totalElements * dtypeSize);
   const result = createTypedArray(resultBuf, dtype);
 
@@ -426,21 +465,18 @@ async function readLindiArray(refs, datasetPath, templates, signal) {
     const nChunks = macroChunkShape[0];
     const chunkPromises = [];
     for (let ci = 0; ci < nChunks; ci++) {
-      chunkPromises.push(readLindiChunk(refs, datasetPath + "/" + ci, templates, null, signal));
+      chunkPromises.push(fetchChunk(datasetPath + "/" + ci));
     }
     const chunkBuffers = await Promise.all(chunkPromises);
     let offset = 0;
     for (let ci = 0; ci < nChunks; ci++) {
       if (!chunkBuffers[ci]) return null;
       const chunkData = createTypedArray(chunkBuffers[ci], dtype);
-      // Last chunk may be padded; only copy actual data elements
       const elemsToCopy = Math.min(chunkData.length, shape[0] - ci * chunks[0]);
       result.set(chunkData.subarray(0, elemsToCopy), offset);
       offset += elemsToCopy;
     }
   } else {
-    // 2D: chunks are typically [K, shape[1]] (chunked along first dim only)
-    // General case: iterate over all chunk indices
     const nChunks0 = macroChunkShape[0];
     const nChunks1 = macroChunkShape[1];
     const chunkPromises = [];
@@ -448,9 +484,7 @@ async function readLindiArray(refs, datasetPath, templates, signal) {
     for (let ci0 = 0; ci0 < nChunks0; ci0++) {
       for (let ci1 = 0; ci1 < nChunks1; ci1++) {
         chunkIndices.push([ci0, ci1]);
-        chunkPromises.push(
-          readLindiChunk(refs, datasetPath + "/" + ci0 + "." + ci1, templates, null, signal),
-        );
+        chunkPromises.push(fetchChunk(datasetPath + "/" + ci0 + "." + ci1));
       }
     }
     const chunkBuffers = await Promise.all(chunkPromises);
@@ -496,17 +530,8 @@ async function readLindiFullTimestamps(refs, seriesPath, templates, signal) {
   if (tsArray) return tsArray instanceof Float64Array ? tsArray : new Float64Array(tsArray);
 
   // Fall back to starting_time + rate (synthesize timestamps)
-  const zattrsRef = refs[seriesPath + "/.zattrs"];
-  if (!zattrsRef) return null;
-  const zattrsText = lindiRefToString(zattrsRef);
-  if (!zattrsText) return null;
-
-  let zattrs;
-  try {
-    zattrs = JSON.parse(zattrsText);
-  } catch {
-    return null;
-  }
+  const zattrs = parseLindiJsonRef(refs[seriesPath + "/.zattrs"]);
+  if (!zattrs) return null;
 
   // Need to read starting_time scalar and get rate from zattrs
   const startingTimeRef = refs[seriesPath + "/starting_time/0"];
@@ -514,17 +539,8 @@ async function readLindiFullTimestamps(refs, seriesPath, templates, signal) {
   if (startingTime === null) return null;
 
   // Rate is stored in starting_time's zattrs (as "rate" attribute on the starting_time dataset)
-  const stZattrsRef = refs[seriesPath + "/starting_time/.zattrs"];
-  if (!stZattrsRef) return null;
-  const stZattrsText = lindiRefToString(stZattrsRef);
-  if (!stZattrsText) return null;
-
-  let stZattrs;
-  try {
-    stZattrs = JSON.parse(stZattrsText);
-  } catch {
-    return null;
-  }
+  const stZattrs = parseLindiJsonRef(refs[seriesPath + "/starting_time/.zattrs"]);
+  if (!stZattrs) return null;
 
   const rate = stZattrs.rate;
   if (!rate || rate <= 0) return null;
@@ -567,15 +583,16 @@ async function loadCameraPoseDataFromLindi(lindi, seriesPaths, signal) {
 
   const results = await Promise.all([...dataPromises, timestampsPromise]);
   const timestamps = results[results.length - 1];
-  if (!timestamps) return null;
+  if (!timestamps) { console.log("[pose-lindi] timestamps null"); return null; }
 
   const coordinates = {};
   for (let i = 0; i < names.length; i++) {
-    if (!results[i]) return null; // compressed or failed, fall back to Python
+    if (!results[i]) { console.log("[pose-lindi] null result for", names[i]); return null; }
     coordinates[names[i]] = results[i];
   }
 
   const nFrames = timestamps.length;
+  console.log("[pose-lindi] success:", names.length, "keypoints,", nFrames, "frames");
   return { coordinates, timestamps, nFrames };
 }
 
@@ -628,8 +645,28 @@ async function resolveVideoInfo(model, state) {
     return;
   }
 
-  // Cache LINDI JSON for pose data loading
-  if (state) state.lindi = lindi;
+  // Cache LINDI JSON for video resolution
+  if (state) state.lindiVideo = lindi;
+
+  // For pose data, we need the LINDI for the pose/processed asset (may differ in split-file case).
+  // If video and pose are in the same asset, reuse the same LINDI.
+  const poseAssetId = model.get("_nwb_asset_id");
+  if (poseAssetId && poseAssetId !== assetId) {
+    // Split-file case: fetch separate LINDI for the processed asset
+    const poseLindiUrl =
+      "https://lindi.neurosift.org/" + lindiEnv + "/dandisets/" + dandisetId + "/assets/" + poseAssetId + "/nwb.lindi.json";
+    try {
+      const poseResp = await fetch(poseLindiUrl);
+      if (poseResp.ok) {
+        state.lindi = await poseResp.json();
+      }
+    } catch {
+      // Pose LINDI unavailable, JS pose loading will fail and fall back to Python
+    }
+  } else {
+    // Single-file case: pose and video in the same asset
+    if (state) state.lindi = lindi;
+  }
 
   const refs = lindi.refs;
   const videoUrls = {};
@@ -1425,8 +1462,22 @@ function render({ model, el }) {
       return;
     }
 
+    const loadStart = performance.now();
+
+    function reportLoad(path, camera) {
+      const elapsed = performance.now() - loadStart;
+      model.set("_pose_load_info", { camera, path, elapsed_ms: Math.round(elapsed) });
+      model.save_changes();
+    }
+
     // If data is already available (LINDI cache or Python), switch immediately
-    if (sharedState.lindiPoseCache[camera] || model.get("all_camera_data")[camera]) {
+    if (sharedState.lindiPoseCache[camera]) {
+      reportLoad("lindi_cached", camera);
+      switchCamera();
+      return;
+    }
+    if (model.get("all_camera_data")[camera]) {
+      reportLoad("python_cached", camera);
       switchCamera();
       return;
     }
@@ -1447,10 +1498,11 @@ function render({ model, el }) {
           seriesPaths,
           controller.signal,
         );
-        if (controller.signal.aborted) return; // camera was switched during load
+        if (controller.signal.aborted) return;
 
         if (result) {
           sharedState.lindiPoseCache[camera] = result;
+          reportLoad("lindi", camera);
           switchCamera();
           updateLoadingState();
           return;
@@ -1461,6 +1513,7 @@ function render({ model, el }) {
       }
 
       // LINDI loading failed, signal Python to load data
+      reportLoad("lindi_failed", camera);
       model.set("_pose_lindi_failed", true);
       model.save_changes();
     } else if (seriesPaths && !sharedState.lindi) {
@@ -1488,6 +1541,7 @@ function render({ model, el }) {
 
           if (result) {
             sharedState.lindiPoseCache[camera] = result;
+            reportLoad("lindi_after_wait", camera);
             switchCamera();
             updateLoadingState();
             return;
@@ -1498,6 +1552,7 @@ function render({ model, el }) {
       }
 
       // LINDI unavailable or loading failed
+      reportLoad("lindi_failed_after_wait", camera);
       model.set("_pose_lindi_failed", true);
       model.save_changes();
     }
