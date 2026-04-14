@@ -1,4 +1,4 @@
-# v0.1.7 (Upcoming)
+# v0.1.7 (2026-04-14)
 
 ## Removals, Deprecations and changes
 
